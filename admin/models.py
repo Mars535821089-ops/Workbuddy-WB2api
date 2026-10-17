@@ -45,7 +45,7 @@ class Account(Base):
     # 连续 12153「session dead」计数：达到阈值才禁用。
     # 一次就禁用等于误杀 —— 该错误在真实环境会被临时性触发（上游抖动/并发刷新）。
     session_dead_fails = Column(Integer, default=0)
-    # 连败降权（「不知道原因的失败」兜底：未知 4xx 与传输层抖动）：
+    # 连败降权（传输层抖动与上游内部故障）：
     # 带权威分类的错误各有自己的惩罚，不喂这个计数器，避免重复计罚。
     consecutive_fails = Column(Integer, default=0)
     degrade_until = Column(DateTime, nullable=True)

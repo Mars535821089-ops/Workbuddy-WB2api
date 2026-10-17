@@ -1,8 +1,9 @@
-"""Bounded local timing records. Never retain headers, credentials or bodies."""
+"""Bounded timings and upstream error messages; no headers or request bodies."""
 from collections import deque
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
+import re
 import threading
 import time
 import uuid
@@ -108,6 +109,32 @@ def mark_upstream_error(kind, status=None):
                 record['upstream_status'] = status
 
 
+def mark_account_policy(account_id, model, kind, status, code, *, message=None, cool_until=None,
+                        breaker_until=None, degrade_until=None):
+    """Keep bounded routing evidence and original messages, excluding request data."""
+    record = current.get()
+    if record is None:
+        return
+    event = {'account_id': int(account_id), 'kind': kind, 'http_status': status}
+    if isinstance(model, str) and re.fullmatch(r'[\w./:-]{1,120}', model, re.ASCII):
+        event['model'] = model
+    value = str(code) if code is not None else ''
+    if value:
+        event['upstream_code'] = value[:128]
+    if isinstance(message, str):
+        event['upstream_message'] = message[:4096]
+        if len(message) > 4096:
+            event['message_truncated'] = True
+    for name, until in (('cool_until', cool_until), ('breaker_until', breaker_until),
+                        ('degrade_until', degrade_until)):
+        if isinstance(until, datetime):
+            event[name] = until.isoformat(timespec='seconds') + 'Z'
+    with _lock:
+        history = record.setdefault('account_policy_events', [])
+        if len(history) < 12:
+            history.append(event)
+
+
 def set_phase(name):
     record = current.get()
     if record is not None:
@@ -119,6 +146,8 @@ def snapshot():
     def copy(record):
         result = {key: value for key, value in record.items() if not key.startswith('_')}
         result['stages'] = [dict(stage) for stage in record['stages']]
+        if 'account_policy_events' in record:
+            result['account_policy_events'] = [dict(event) for event in record['account_policy_events']]
         health = record.get('_runtime_health')
         if health is not None:
             result.update(health.since(record['_perf_start']))

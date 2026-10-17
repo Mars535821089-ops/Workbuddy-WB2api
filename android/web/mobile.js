@@ -83,11 +83,13 @@ window.WBMobile = (() => {
         <div class="mobile-diagnostic-records">${records.map(row => `<details class="mobile-diagnostic-record">
           <summary><b>${esc(row.path)}</b><small>${esc(new Date(row.started_at).toLocaleTimeString())} · ${esc(outcomes[row.outcome] || '—')} · HTTP ${row.status || '—'}</small>
           <span>${row.streaming ? '有效增量' : '响应体'} ${seconds(row.first_delta_ms)} · 已耗时 ${seconds(row.elapsed_ms ?? row.total_ms)}</span></summary>
-          <div><p>请求编号：${esc(row.id)}</p><p>响应头：${seconds(row.headers_ms)} · 传输首字节：${seconds(row.first_body_ms)}</p>
+          <div><p>请求编号：${esc(row.id)}</p><p>网关返回 HTTP：${Number(row.status) || '—'}</p><p>响应头：${seconds(row.headers_ms)} · 传输首字节：${seconds(row.first_body_ms)}</p>
           ${row.ingress_ms != null ? `<p>首个请求字节到处理：${seconds(row.ingress_ms)} · 调度等待：${seconds(row.asgi_queue_ms)}</p><p>服务调度最大延迟：${seconds(row.event_loop_lag_ms)}</p>` : ''}
           ${row.upstream_attempts ? `<p>上游请求次数：${Number(row.upstream_attempts)}</p>` : ''}
           ${row.network_error ? `<p>网络错误类型：${esc(row.network_error)}</p>` : ''}
-          ${row.upstream_error && row.upstream_error !== 'success' ? `<p>上游失败分类：${esc(row.upstream_error)}${row.upstream_status ? ` · HTTP ${Number(row.upstream_status)}` : ''}</p>` : ''}
+          ${row.upstream_status ? `<p>最近一次上游 HTTP：${Number(row.upstream_status)}</p>` : '<p>上游 HTTP：未收到 HTTP 响应</p>'}
+          ${row.upstream_error && row.upstream_error !== 'success' ? `<p>网关处理分类：${esc(row.upstream_error)}</p>` : ''}
+          ${(row.account_policy_events || []).map(event => `<div><p>账号 #${Number(event.account_id)}${event.model ? ` · ${esc(event.model)}` : ''}：上游 HTTP ${Number(event.http_status) || '未收到 HTTP 响应'} · 上游 code：${esc(event.upstream_code ?? '未提供')}</p><p>上游 msg：${event.upstream_message != null ? esc(event.upstream_message) : '未提供'}${event.message_truncated ? '（详情已截断，完整原文见账号错误记录）' : ''}</p><p>网关处理分类：${esc(event.kind)}</p></div>`).join('')}
           ${row.outcome === 'active' ? `<p>当前步骤：${esc(labels[row.phase] || row.phase || '等待处理')}</p>` : ''}
           ${row.request_error ? `<p>${esc(requestErrors[row.request_error] || '读取请求正文失败')}</p>` : ''}
           ${row.method && !['GET','HEAD','OPTIONS'].includes(row.method) ? `<p>请求正文：${row.upload_complete ? '接收完成' : '未接收完成'}</p>` : ''}
