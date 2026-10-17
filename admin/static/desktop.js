@@ -162,8 +162,7 @@ window.WBDesktop = (() => {
     if (initialized) return;
     initialized = true; native = true;
     try {
-      const result = await pywebview.api.desktop_login();
-      TOKEN = result.token; localStorage.setItem(TOKEN_KEY, TOKEN);
+      await ensureLocalSession();
       // Existing persisted token may already have entered the application.
       if (document.getElementById('app').classList.contains('hidden')) enterApp();
       document.getElementById('localBoot')?.remove();

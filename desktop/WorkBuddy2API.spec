@@ -6,7 +6,8 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 root = Path(SPECPATH).parent
 version = json.loads((root / 'desktop/version.json').read_text(encoding='utf-8'))['version']
 name = f'WorkBuddy2API-{version}-windows-x64'
-datas = [(str(root / 'admin/static'), 'admin/static'),
+datas = [(str(root / 'admin/data'), 'admin/data'),
+         (str(root / 'admin/static'), 'admin/static'),
          (str(root / 'turing_helper.js'), '.'),
          (str(root / 'desktop/version.json'), 'desktop'),
          (str(root / 'desktop/apply-update.ps1'), 'desktop'),

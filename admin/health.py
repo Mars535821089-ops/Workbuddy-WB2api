@@ -8,6 +8,7 @@ from sqlalchemy import case, func
 from admin.config import settings
 from admin.models import Account, AccountModelCooldown, ModelConfig, UsageLog
 from admin.pool import POOL
+from admin.account_binding import scope_accounts
 
 
 def risk_health(db, now):
@@ -38,7 +39,7 @@ def model_health(db, hours=24):
 
     now = datetime.utcnow()
     since = now - timedelta(hours=hours)
-    accounts = db.query(Account).all()
+    accounts = scope_accounts(db.query(Account)).all()
     configs = {c.model_id: c for c in db.query(ModelConfig).filter(
         ModelConfig.level == "system", ModelConfig.enabled == 1).all()}
     limits = db.query(AccountModelCooldown).filter(AccountModelCooldown.until > now).all()

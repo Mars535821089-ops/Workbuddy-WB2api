@@ -83,6 +83,7 @@ def prepare() -> None:
     metadata["asset"] = "WorkBuddy2API-{version}-android-arm64.apk"
     (staging / "desktop/version.json").write_text(json.dumps(metadata), encoding="utf-8")
     shutil.copytree(ROOT / "admin/static", staging / "admin/static")
+    shutil.copytree(ROOT / "admin/data", staging / "admin/data")
     index = staging / "admin/static/index.html"
     index.write_text(mobile_html(index.read_text(encoding="utf-8")), encoding="utf-8")
     for name in ("mobile.js", "mobile.css", "mobile_settings.js"):

@@ -965,11 +965,11 @@ class LiveProbe:
 _TOKEN_DEAD_CODES = {
     12153: "登录态已失效（会话不存在）",
     12151: "登录态无效（未选择账号）",
-    11102: "登录态无效（该后端无此模型）",
 }
 #: 上游业务码 -> 人话。这些表示配额类问题，**不影响凭证真实性**。
 _QUOTA_CODES = {
     6004: "该模型使用量超限",
+    6008: "该模型每日请求数已达上限",
     14003: "触发上游限流",
     14051: "该权益已领取",
 }
@@ -989,6 +989,10 @@ def _extract_upstream_error(exc: Exception) -> tuple[int | None, str]:
     返回值 `(code, msg)`；code 可能是业务码（5 位）也可能是 HTTP 状态码（3 位），
     两者在判据里会被分别处理。
     """
+    from admin.upstream_errors import error_info
+    evidence = getattr(exc, 'upstream', None) or error_info(str(exc))
+    if evidence.get('code') and str(evidence['code']).lstrip('-').isdigit():
+        return int(evidence['code']), evidence.get('message') or evidence['raw']
     text = str(exc)
 
     # 1) `HTTP 200 / 11217:msg` —— 业务码优先
@@ -1070,26 +1074,26 @@ def probe_credential_live(credential_json: str) -> LiveProbe:
                 code, _m = _extract_upstream_error(e)
                 if code in _TOKEN_DEAD_CODES:
                     return LiveProbe(
-                        False, f"上游拒绝该凭证：{_TOKEN_DEAD_CODES[code]}",
+                        False, f"上游拒绝该凭证：{_TOKEN_DEAD_CODES[code]}；上游 code={code}，原文：{getattr(e, 'raw_body', str(e))}",
                         reason="token_dead")
                 if code in (401, 403):
                     return LiveProbe(
-                        False, "上游拒绝该凭证（鉴权失败，可能已失效或伪造）",
+                        False, f"上游拒绝了凭据验证请求；上游 HTTP/code={code}，原文：{getattr(e, 'raw_body', str(e))}",
                         reason="auth_failed")
                 _logger.debug("wb_login: fetch_account_profile 失败（忽略）：%s", e)
     except Exception as e:
         code, msg = _extract_upstream_error(e)
         if code in _TOKEN_DEAD_CODES:
-            return LiveProbe(False, f"上游拒绝该凭证：{_TOKEN_DEAD_CODES[code]}",
+            return LiveProbe(False, f"上游拒绝该凭证：{_TOKEN_DEAD_CODES[code]}；上游 code={code}，原文：{getattr(e, 'raw_body', str(e))}",
                              reason="token_dead")
         if code in _QUOTA_CODES:
             # 配额类问题不代表凭证假 —— 放行，并如实说明。
-            return LiveProbe(True, f"凭证有效（{_QUOTA_CODES[code]}）",
+            return LiveProbe(True, f"上游返回额度限制（{_QUOTA_CODES[code]}）；上游 code={code}，原文：{getattr(e, 'raw_body', str(e))}",
                              profile=profile, reason="quota")
         if code == 401 or code == 403:
-            return LiveProbe(False, "上游拒绝该凭证（鉴权失败，可能已失效或伪造）",
+            return LiveProbe(False, f"上游拒绝了凭据验证请求；上游 HTTP/code={code}，原文：{getattr(e, 'raw_body', str(e))}",
                              reason="auth_failed")
-        return LiveProbe(False, f"无法用该凭证访问上游：{msg[:160]}",
+        return LiveProbe(False, f"无法用该凭证访问上游；上游 code={code or '未返回'}，原文：{getattr(e, 'raw_body', str(e))}",
                          reason="upstream_error")
 
     # 3) 交叉比对：上游真实 uid 必须与凭证里声明的一致

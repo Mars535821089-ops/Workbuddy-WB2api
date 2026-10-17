@@ -513,6 +513,13 @@
     .confirm-ico.warn{ background:#fef3c7; color:#d97706; }
     .confirm-ico.info{ background:rgba(40,184,148,.12); color:var(--wb-primary-d); }
     table.min-w{ min-width:680px; }
+    .model-limit-table{ min-width:1380px; }
+    .model-limit-table th:nth-child(1){ min-width:100px; }
+    .model-limit-table th:nth-child(2){ min-width:145px; }
+    .model-limit-table th:nth-child(3){ min-width:300px; }
+    .model-limit-table th:nth-child(4){ min-width:180px; }
+    .model-limit-table th:nth-child(5){ min-width:155px; }
+    .model-limit-table td{ overflow-wrap:anywhere; }
     table.min-w-sm{ min-width:560px; }
     table.min-w-lg{ min-width:940px; }
     /* 状态胶囊：表格里被窄列挤压时不允许折行（「正常」竖成两行非常难看） */
@@ -1300,6 +1307,7 @@
           <div class="section-head" style="margin:0">
             <h3>账号到期排行</h3>
             <span class="hint" id="creditAccHint"></span>
+            <button id="creditAutoOrder" class="console-btn quiet" onclick="resetCreditOrder()">恢复自动排序</button>
           </div>
           <label class="flex items-center gap-1.5 fs-11-5" style="color:var(--fg-muted)">
             <input type="checkbox" id="creditShowDisabled" onchange="loadCreditStats()" /> 含已禁用账号
@@ -1588,17 +1596,28 @@ function fmtK(n) {
   return String(n);
 }
 
+let _localSessionPromise = null, _localSessionReady = false;
+async function ensureLocalSession(force = false) {
+  if (_localSessionReady && !force) return;
+  if (!_localSessionPromise) _localSessionPromise = (async () => {
+    const token = window.pywebview?.api ? (await pywebview.api.desktop_login()).token : await WBAndroid.sessionToken();
+    if (!token) throw new Error('本地连接凭据未准备好');
+    TOKEN = token; localStorage.setItem(TOKEN_KEY, token); _localSessionReady = true;
+  })().finally(() => { _localSessionPromise = null; });
+  return _localSessionPromise;
+}
 async function api(path, opts = {}) {
+  const localShell = window.pywebview?.api || window.WBAndroid?.sessionToken;
+  // Prepare the non-expiring shell credential before the first request;
+  // concurrent panel loads share one bridge call and never need a login form.
+  if (localShell) await ensureLocalSession();
   opts.headers = Object.assign({ "X-Admin-Token": TOKEN }, opts.headers || {});
   let response = await fetch(path, opts);
-  if (response.status === 401 && (window.pywebview?.api || window.WBAndroid?.sessionToken)) {
+  if (response.status === 401 && localShell) {
     try {
-      const token = window.pywebview?.api ? (await pywebview.api.desktop_login()).token : WBAndroid.sessionToken();
-      if (token) {
-        TOKEN = token; localStorage.setItem(TOKEN_KEY, token);
-        opts.headers['X-Admin-Token'] = token;
-        response = await fetch(path, opts);
-      }
+      await ensureLocalSession(true);
+      opts.headers['X-Admin-Token'] = TOKEN;
+      response = await fetch(path, opts);
     } catch (_) {}
   }
   return response;
@@ -1613,7 +1632,7 @@ function toast(msg, type = "ok") {
   const c = type === "ok" ? "bg-emerald-600" : "bg-red-600";
   const el = document.createElement("div");
   el.className = `text-white text-sm px-4 py-2 rounded-lg shadow ${c} fade-in`;
-  el.innerHTML = msg;
+  el.textContent = msg;
   $("#toasts").appendChild(el);
   setTimeout(() => el.remove(), 3200);
 }
@@ -2066,7 +2085,17 @@ function accountLimitBadge(a) {
   return gateway + `<button class="limit-chip" onclick="openModelLimits(${a.id})" data-tooltip="${limits.length} 个模型冷却" data-tooltip-description="${esc(scope + '\n' + detail)}" aria-label="查看模型冷却列表">${limits.length} 模型冷却</button>`;
 }
 function modelLimitDeadlineLabel(entry) {
-  return {upstream:'上游重置时间',queue_retry:'上游建议重试时间',estimated:'本地保守冷却至',backoff:'本地退避至'}[entry.reset_source] || '本地冷却至';
+  return {upstream:'上游重置时间',client_midnight:'按客户端规则，次日零点可重试',queue_retry:'上游建议重试时间',estimated:'本地保守冷却至',backoff:'本地退避至'}[entry.reset_source] || '本地冷却至';
+}
+
+function upstreamEvidenceHtml(info) {
+  if (!info || (!info.raw && !info.http_status && !info.code)) return '<small>尚无上游错误原文</small>';
+  const display = typeof info.display_message === 'string' ? info.display_message : JSON.stringify(info.display_message || {});
+  return `<details><summary>上游 HTTP ${esc(info.http_status ?? '未记录')} / code ${esc(info.code ?? '未返回')}</summary>
+    ${info.client_message ? `<p>客户端解释：${esc(info.client_message)} ${esc(info.client_description || '')}</p>` : ''}
+    ${info.message != null ? `<p>上游 message：${esc(info.message)}</p>` : ''}
+    ${info.display_message ? `<p>上游 displayMsg：${esc(display)}</p>` : ''}
+    <pre style="white-space:pre-wrap;overflow-wrap:anywhere;max-width:560px;max-height:220px;overflow:auto">${esc(info.raw)}</pre></details>`;
 }
 
 // One fixed tooltip avoids clipping by scroll containers and supports keyboard focus.
@@ -2156,17 +2185,18 @@ async function openModelLimits(accountId = null) {
       Number(Number(a.available_accounts) > 0) - Number(Number(b.available_accounts) > 0)
       || Number(b.limited_accounts || 0) - Number(a.limited_accounts || 0)
       || String(a.model || '').localeCompare(String(b.model || '')));
-    const kind = {model_daily:'日额度耗尽',model_rate:'短时限流',model_queue:'上游排队',model_block:'模型不可用'};
-    const source = {upstream:'上游明确重置时间',queue_retry:'上游 retry_after（重试间隔，不是排队结束时间）',estimated:'本地保守估计，上游未返回重置时间',backoff:'本地退避策略，不代表上游已恢复'};
+    const kind = {model_daily:'模型日限额已触发',model_rate:'短时限流',model_queue:'上游排队',model_block:'上游模型服务不存在 / 未配置'};
+    const source = {upstream:'上游明确重置时间',client_midnight:'客户端 6008 规则：次日零点重置（北京时间）',queue_retry:'上游 retry_after（重试间隔，不是排队结束时间）',estimated:'上游未给重置时间，本地保守冷却（默认 24 小时）',backoff:'本地退避策略，不代表上游已恢复'};
     const risk = healthResult.ok ? healthResult.data.risk : null;
     const observations = risk?.observations || {};
     const riskCount = reason => Number(observations[reason]?.requests || 0);
     const backgroundSkips = Object.values(risk?.maintenance?.skipped_since_start || {}).reduce((sum, n) => sum + Number(n), 0);
-    container.innerHTML = `<p class="limit-note">积分余额与模型每日额度分别计算；0 倍率模型也可能触发日限额。冷却仅作用于对应账号的对应模型，到期后自动恢复候选资格。今日请求 / Token 仅统计本网关成功调用，无法据此推算官方剩余额度或客户端消耗。</p>
+    container.innerHTML = `<p class="limit-note">积分余额与模型每日额度分别计算，0 倍率模型也会触发日限额。6004 = 每日 Token 上限；6008 = 每日请求数上限，客户端说明次日零点重置。上游未提供每日限额数值时显示“未知”，不能用本网关用量推算官方剩余额度。冷却到期仅恢复重试资格。</p>
       ${d.waf_remaining_seconds > 0 ? `<p class="limit-note">出口 IP 保护已触发，约 ${d.waf_remaining_seconds} 秒后解除本地保护，是否可用仍需上游确认。</p>` : ''}
       ${risk ? `<p class="limit-note">近 ${Number(risk.window_minutes)} 分钟网关观测：WAF ${riskCount('waf')} 次，账号限流 ${riskCount('soft_rate')} 次，模型限流 / 排队 ${riskCount('model_rate')} 次，授权限制 ${riskCount('account_fault')} 次，登录失效 ${riskCount('session_dead')} 次。后台当前预留 ${Number(risk.maintenance.reserved_accounts)} 个账号，本进程启动以来累计保护跳过 ${backgroundSkips} 次；这是本网关观测，不代表官方风控评分。</p>` : ''}
       <h4 class="health-title">当前模型限制 · 不可用优先</h4>
-      <div class="overflow-x-auto"><table class="tbl min-w"><thead><tr><th>账号</th><th>模型</th><th>原因</th><th>重置 / 重试 / 本地冷却截止（北京时间）</th><th>依据</th><th>今日请求 / Token</th><th>操作</th></tr></thead><tbody>${entries.map(e => `<tr><td>${esc(e.account_name)}</td><td>${esc(e.model)}</td><td>${kind[e.kind] || esc(e.kind)}</td><td>${modelLimitDeadlineLabel(e)}<br>${fmtTime(e.until)}</td><td>${source[e.reset_source] || '本地退避策略'}</td><td>${e.requests_today} / ${e.tokens_today}</td><td><button class="console-btn quiet" onclick="clearModelLimit(${e.account_id},${esc(JSON.stringify(e.model))})">解除冷却</button></td></tr>`).join('') || '<tr><td colspan="7" class="account-empty">当前没有模型冷却记录</td></tr>'}</tbody></table></div>
+      <div class="overflow-x-auto"><table class="tbl model-limit-table"><thead><tr><th>账号</th><th>模型</th><th>本网关判断 / 上游依据</th><th>重置 / 重试 / 本地冷却截止（北京时间）</th><th>时间依据</th><th>官方日限额 / 剩余</th><th>本网关今日成功 / 请求 · Token</th><th>操作</th></tr></thead><tbody>${entries.map(e => `<tr><td>${esc(e.account_name)}</td><td>${esc(e.model)}</td><td>${e.upstream_code === '6004' ? '每日 Token 已达上限' : e.upstream_code === '6008' ? '每日请求数已达上限' : kind[e.kind] || esc(e.kind)}${upstreamEvidenceHtml(e.upstream_error)}</td><td>${modelLimitDeadlineLabel(e)}<br>${fmtTime(e.until)}</td><td>${source[e.reset_source] || '本地退避策略'}</td><td>${esc(e.quota_total ?? '未知')} / ${esc(e.quota_remaining ?? '未知')}</td><td>${e.successes_today ?? '—'} / ${e.requests_today ?? 0}<br>Token：${e.tokens_today == null ? '未记录' : fmtK(e.tokens_today)}</td><td><button class="console-btn quiet" onclick="clearModelLimit(${e.account_id},${esc(JSON.stringify(e.model))})">解除冷却</button></td></tr>`).join('') || '<tr><td colspan="8" class="account-empty">当前没有模型冷却记录</td></tr>'}</tbody></table></div>
+      <details class="limit-note"><summary>最近账号错误原文（${(d.account_errors || []).filter(e => accountId == null || e.account_id === accountId).length} 条，历史记录不代表当前不可用）</summary>${(d.account_errors || []).filter(e => accountId == null || e.account_id === accountId).map(e => `<div><b>${esc(e.account_name)}</b>${upstreamEvidenceHtml(e.upstream_error)}</div>`).join('')}</details>
       <h4 class="health-title">模型健康 · 近 24 小时（无可选账号优先）</h4>
       <div class="overflow-x-auto"><table class="tbl health-table"><thead><tr><th>模型</th><th>可选 / 受限账号</th><th>成功 / 请求</th><th>失败率</th><th>首响应 P50 / P95</th><th>总耗时 P95</th><th>最早冷却截止</th></tr></thead><tbody>${healthResult.ok ? healthItems.map(m => `<tr><td><b>${esc(m.model)}</b>${m.free ? '<small class="health-free">免费</small>' : ''}</td><td>${m.available_accounts} / ${m.limited_accounts}</td><td>${m.successes} / ${m.requests}</td><td>${m.failure_rate == null ? '—' : (m.failure_rate * 100).toFixed(1) + '%'}</td><td>${m.ttfb_ms.p50 == null ? '—' : m.ttfb_ms.p50 + ' ms'} / ${m.ttfb_ms.p95 == null ? '—' : m.ttfb_ms.p95 + ' ms'}</td><td>${m.latency_ms.p95 == null ? '—' : m.latency_ms.p95 + ' ms'}</td><td>${m.earliest_model_recovery ? fmtTime(m.earliest_model_recovery) : '—'}</td></tr>`).join('') || '<tr><td colspan="7" class="account-empty">暂无模型观测</td></tr>' : '<tr><td colspan="7" class="account-empty">健康统计暂时不可用</td></tr>'}</tbody></table></div>
       <p class="limit-note">延迟取最近最多 2000 条成功记录；账号可选数包含当前进程在途占用和出口保护。冷却截止只表示可再次尝试，不保证上游模型或账号已恢复可用。</p>
@@ -2333,10 +2363,13 @@ async function refreshAcc(id){
     // 刷新现在会一并更新积分到期快照（后端 with_expiry 默认开），
     // 所以提示里带上「7 天内到期」的数字 —— 这才是用户刷新想确认的事。
     const soon = Number((data && data.credits_expiring_soon) || 0);
-    toast(soon > 0 ? `已刷新：${soon} 积分将在 7 天内到期` : "余额与积分到期快照已刷新");
+    toast(data?.warnings?.length ? '余额已刷新，到期快照未完整更新' : soon > 0 ? `已刷新：${soon} 积分将在 7 天内到期` : "余额与积分到期快照已刷新");
   } else {
-    toast("刷新失败" + (data && data.detail ? "：" + data.detail : ""), "err");
+    const detail = data?.detail;
+    toast(typeof detail === 'object' ? detail.message : '刷新失败' + (detail ? '：' + detail : ''), 'err');
+    if (detail?.upstream) openModal(`<h3>账号余额刷新失败</h3><p class="limit-note">本网关记录的上游响应如下：</p>${upstreamEvidenceHtml(detail.upstream)}`, 'max-w-3xl');
   }
+  if (r.ok && data?.warnings?.length) openModal(`<h3>余额已刷新，到期快照未完整更新</h3>${data.warnings.map(upstreamEvidenceHtml).join('')}`, 'max-w-3xl');
   if (r.ok) { loadAccounts(); if (_creditStats) loadCreditStats(); }
 }
 async function toggleAcc(id,st){ await api("/api/accounts/"+id,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:st})}); loadAccounts(); }
@@ -3533,7 +3566,8 @@ function renderCreditAccounts(d) {
   const hint = $("#creditAccHint");
   if (!body) return;
   const rows = d.accounts || [];
-  if (hint) hint.textContent = `${rows.length} 个账号 · 与调度优先级同序`;
+  if (hint) hint.textContent = `${rows.length} 个账号 · ${d.selection_mode === 'manual' ? '手动优先级' : '自动按到期排序'} · 调整将影响真实账号使用顺序`;
+  if ($('#creditAutoOrder')) $('#creditAutoOrder').disabled = d.selection_mode !== 'manual';
   if (!rows.length) {
     body.innerHTML = `<tr><td colspan="9"><div class="empty">没有账号。先在「账号池」里添加。</div></td></tr>`;
     return;
@@ -3565,11 +3599,45 @@ function renderCreditAccounts(d) {
         ${a.synced_at ? `<div class="text-[10px] mt-0.5" style="color:var(--fg-subtle)">${fmtTime(new Date(a.synced_at).toISOString().replace('T',' ').slice(0,19), false)} 采集</div>` : ""}</td>
       <td class="align-top" style="min-width:230px">${next || `<span class="text-[11px]" style="color:var(--fg-subtle)">没有仍有剩余的积分包</span>`}</td>
       <td class="align-top text-right whitespace-nowrap">
+        <button type="button" class="console-btn quiet" onclick="moveCreditAccount(${a.account_id},-1)" aria-label="上移账号 ${esc(a.account_name)}" title="上移，提高真实使用优先级" ${i === 0 ? 'disabled' : ''}>↑</button>
+        <button type="button" class="console-btn quiet" onclick="moveCreditAccount(${a.account_id},1)" aria-label="下移账号 ${esc(a.account_name)}" title="下移，降低真实使用优先级" ${i === rows.length - 1 ? 'disabled' : ''}>↓</button>
         <button onclick="viewCreditDetails(${a.account_id},'${esc(a.account_name)}')" class="text-amber-600 hover:text-amber-800 mr-1" title="查看全部积分包"><i class="fa-solid fa-list-ul"></i></button>
         <button onclick="refreshAcc(${a.account_id}).then(loadCreditStats)" class="text-indigo-600 hover:text-indigo-800" title="重新采集该账号"><i class="fa-solid fa-rotate"></i></button>
       </td>
     </tr>`;
   }).join("");
+}
+
+let _creditOrderSaving = false;
+async function saveCreditOrder(mode, ids, description) {
+  if (_creditOrderSaving || !_creditStats) return;
+  _creditOrderSaving = true;
+  const expected = [...(_creditStats.selection_order || [])];
+  try {
+    if (!await uiConfirm({title:'确认调整真实账号优先级', danger:true,
+      message:description + '这会改变实际被优先使用的账号，下一次选号即生效。停用、额度限制、冷却和账号独享绑定仍然有效；在途请求继续执行。是否确认？', okText:'确认调整'})) return;
+    const response = await api('/api/credits/selection-order', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({mode, ids, expected_ids:expected, confirm:true})});
+    const result = await safeJson(response);
+    if (!result.ok) { toast(result.data.detail || '保存排序失败', 'err'); await loadCreditStats(); return; }
+    toast(mode === 'manual' ? '真实账号优先级已更新' : '已恢复自动按到期排序');
+    await loadCreditStats();
+  } catch (error) { toast('保存排序失败：' + error.message, 'err'); }
+  finally { _creditOrderSaving = false; }
+}
+async function moveCreditAccount(accountId, direction) {
+  const visible = _creditStats?.accounts || [];
+  const index = visible.findIndex(a => a.account_id === accountId);
+  const other = visible[index + direction];
+  if (index < 0 || !other || ![-1, 1].includes(direction)) return;
+  const ids = [...(_creditStats.selection_order || [])];
+  const from = ids.indexOf(accountId), to = ids.indexOf(other.account_id);
+  if (from < 0 || to < 0) return;
+  [ids[from], ids[to]] = [ids[to], ids[from]];
+  await saveCreditOrder('manual', ids, `将「${visible[index].account_name}」从第 ${index + 1} 位移至第 ${index + direction + 1} 位。`);
+}
+async function resetCreditOrder() {
+  await saveCreditOrder('automatic', [], '恢复按积分到期紧迫度自动排序，清除手动优先级。');
 }
 
 /* ==================== 手机号登录（全自动授权换凭证） ====================

@@ -35,6 +35,8 @@ class Account(Base):
     cool_kind = Column(String(16), default="")       # hard_credit | soft_rate | error_threshold | not_found
     last_err_at = Column(DateTime, nullable=True)
     last_err_msg = Column(String(255), default="")
+    last_upstream_error = Column(Text, default="")
+    selection_priority = Column(Integer, nullable=True, default=None)
     last_picked_at = Column(DateTime, nullable=True)  # 最近一次被选中（仅观测；防撞号窗口已移入进程内存）
     # 熔断：连续失败达阈值后指数退避，封顶 breaker_cooldown_max。
     # 与 cool_until 是**或门**关系（任一未到期即不可选），生效的是更晚的那个。
@@ -94,6 +96,8 @@ class AccountModelCooldown(Base):
     until = Column(DateTime, nullable=True)          # 冷却截止
     kind = Column(String(24), default="")            # model_daily | model_rate | model_queue | model_block
     reason = Column(String(255), default="")
+    upstream_error = Column(Text, default="")
+    reset_source = Column(String(24), default="")
     hits = Column(Integer, default=0)                # 命中次数（model_block 指数退避用）
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

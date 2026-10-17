@@ -29,6 +29,21 @@ def _reason(account):
     return None
 
 
+_SKIP_REASON_TEXT = {
+    'waf': '网关出口正在执行本地 WAF 保护',
+    'inactive': '账号已停用',
+    'account_cooling': '账号处于冷却 / 熔断 / 降权期',
+    'login_required': '上游账号凭据需重新验证或更新',
+    'background_busy': '后台批量任务正在运行',
+    'inflight': '账号在途占用已满',
+}
+
+
+def skip_reason_text(reason, action='已跳过'):
+    text = _SKIP_REASON_TEXT.get(reason, f'账号本轮不可用（{reason or "unknown"}）')
+    return f'{text}，{action}'
+
+
 @contextmanager
 def account_slot(account, db=None):
     """Skip busy/restricted accounts; release reservations even on failure.
@@ -83,8 +98,11 @@ def account_slot(account, db=None):
 def note_failure(db, account, error):
     """Let background WAF/rate observations protect the conversation pool too."""
     from admin.routers.proxy import _apply_account_policy, _classify_error, _extract_http_status
-    message = str(error)
-    status = _extract_http_status(message)
+    import json
+    from admin.upstream_errors import error_info
+    message = getattr(error, 'raw_body', str(error))
+    status = getattr(error, 'http_status', 0) or _extract_http_status(str(error))
+    account.last_upstream_error = json.dumps(error_info(message, status), ensure_ascii=False)
     kind = _classify_error(status, message)
     if kind in ("waf", "soft_rate", "account_fault"):
         from admin.model_limits import reset_from_body

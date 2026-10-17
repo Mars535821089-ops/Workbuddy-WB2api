@@ -51,6 +51,11 @@ def main():
                 assert client.get('/api/app/version').status_code == 200
                 assert client.get('/admin').status_code == 200
                 headers = {'X-Admin-Token': create_admin_token()}
+                import jwt
+                from admin.config import settings
+                shell_token = jwt.encode({'sub': settings.ADMIN_USERNAME, 'local_shell': True,
+                                          'iat': 1}, settings.JWT_SECRET, algorithm='HS256')
+                assert client.get('/api/accounts', headers={'X-Admin-Token': shell_token}).status_code == 200
                 assert client.get('/api/benefits/compensation', headers=headers).status_code == 200
                 assert client.post('/api/benefits/compensation/batch', headers=headers,
                                    json={'confirm': True, 'ids': list(range(5001))}).status_code == 422

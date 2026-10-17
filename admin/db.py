@@ -144,6 +144,10 @@ def init_db() -> bool:
         _ensure_column("accounts", "cool_kind", "VARCHAR(16)", "DEFAULT ''")
         _ensure_column("accounts", "last_err_at", "DATETIME", "NULL")
         _ensure_column("accounts", "last_err_msg", "VARCHAR(255)", "DEFAULT ''")
+        _ensure_column("accounts", "last_upstream_error", "TEXT", "NULL")
+        _ensure_column("accounts", "selection_priority", "INT", "NULL")
+        _ensure_column("account_model_cool", "upstream_error", "TEXT", "NULL")
+        _ensure_column("account_model_cool", "reset_source", "VARCHAR(24)", "DEFAULT ''")
         _ensure_column("accounts", "last_picked_at", "DATETIME", "NULL")
 
         # 迁移：熔断 / session-dead 连续计数 / 连败降权 / 快过期积分
