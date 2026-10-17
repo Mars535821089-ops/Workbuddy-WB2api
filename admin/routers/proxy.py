@@ -1541,14 +1541,14 @@ async def _account_session_async(db: Session, acc: Account):
                                 on_cancel=lambda session: session.close())
 
 
-def _client_stream(source):
-    if os.getenv('WORKBUDDY_ANDROID') == '1':
-        from admin.mobile_stream import events
-        return events(source)
-    return source
-
-
 async def _stream_response(source, anthropic=False):
+    if os.getenv('WORKBUDDY_ANDROID') == '1':
+        from admin.mobile_stream import MobileResponse
+        return MobileResponse(source, lambda stream: _prepare_stream_response(stream, anthropic))
+    return await _prepare_stream_response(source, anthropic)
+
+
+async def _prepare_stream_response(source, anthropic=False):
     """Keep pre-output failures as HTTP errors so SDK retry policies can run."""
     try:
         first = await source.__anext__()
@@ -1588,7 +1588,7 @@ async def _stream_response(source, anthropic=False):
                 yield chunk
         finally:
             await source.aclose()
-    return StreamingResponse(_client_stream(remaining()), media_type="text/event-stream",
+    return StreamingResponse(remaining(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
