@@ -708,6 +708,43 @@ def add_account(body: AccountIn, _: bool = Depends(require_admin), db: Session =
             "verified": True, "balance_remain": acc.balance_remain}
 
 
+def _reauthenticate_account(db: Session, acc_id: int, credential: str,
+                          profile: dict, balance: dict) -> Account:
+    acc = db.query(Account).filter(Account.id == acc_id).with_for_update().first()
+    if acc is None:
+        raise HTTPException(404, "原账号不存在，请刷新列表")
+    old_uid = str(acc.uid or _uid_of(acc.auth_json) or "")
+    new_uid = str(profile.get("uid") or _uid_of(credential) or "")
+    if not old_uid or not new_uid or old_uid != new_uid:
+        raise HTTPException(409, "登录身份与原账号不一致，未替换凭证；请使用原账号重新登录")
+    _apply_meta(acc, credential, profile=profile, balance=balance)
+    acc.status = "active"
+    acc.session_dead_fails = 0
+    acc.consecutive_fails = 0
+    acc.breaker_fails = 0
+    acc.breaker_until = None
+    acc.degrade_until = None
+    # Logging in does not restore upstream quota or remove model daily limits.
+    if acc.cool_kind in ("session_dead", "transport", "upstream_5xx"):
+        acc.cool_kind = ""
+        acc.cool_until = None
+    acc.last_err_msg = ""
+    acc.last_err_at = None
+    acc.last_upstream_error = ""
+    return acc
+
+
+@router.post("/{acc_id}/reauth")
+def reauthenticate_account(acc_id: int, body: AccountIn,
+                           _: bool = Depends(require_admin), db: Session = Depends(get_db)):
+    credential = _decode_or_400(body.auth_json)
+    _reject_non_credential(credential)
+    profile, balance = _verify_credential_live_or_400(credential)
+    acc = _reauthenticate_account(db, acc_id, credential, profile, balance)
+    db.commit()
+    return {"ok": True, "id": acc.id, "message": "凭证已更新，原账号 ID、排序、Key 绑定及历史记录已保留"}
+
+
 @router.post("/batch")
 def batch_add(body: AccountBatchIn, _: bool = Depends(require_admin), db: Session = Depends(get_db)):
     """批量上传：逐条做**结构校验 + 真实上游验证**，不合格的记进 errors 并跳过。

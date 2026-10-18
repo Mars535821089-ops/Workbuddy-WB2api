@@ -58,10 +58,25 @@ def healthy() -> bool:
         return False
 
 
-def start(directory: str) -> str:
+def health_status() -> str:
+    """A slow loopback response is not proof that a live server needs restarting."""
+    alive = bool(_thread and _thread.is_alive() and _server and _server.started
+                 and not _server.should_exit and _state)
+    active = len(_server.server_state.tasks) if alive else 0
+    return json.dumps({'alive': alive, 'responsive': healthy() if alive else False,
+                       'active_requests': active})
+
+
+def start(directory: str, progress=None) -> str:
     global _server, _thread, _state
+    def stage(text):
+        if progress is not None:
+            progress.startupProgress(text)
     with _lock:
-        if healthy():
+        # Opening the Activity must not stop an in-flight conversation merely
+        # because a loopback health request took too long while backgrounded.
+        if (_thread and _thread.is_alive() and _server and _server.started
+                and not _server.should_exit and _state):
             _state["token"] = _issue_token()
             return json.dumps(_state)
         if _thread and _thread.is_alive():
@@ -70,6 +85,7 @@ def start(directory: str) -> str:
             if _thread.is_alive():
                 raise RuntimeError("旧服务尚未停止，请稍后重试（无需清除应用数据）")
         _state = None
+        stage("正在读取本地配置（保留账号数据）")
         from desktop.common import atomic_json
         base = Path(directory) / "WorkBuddy2API"
         base.mkdir(parents=True, exist_ok=True)
@@ -86,6 +102,7 @@ def start(directory: str) -> str:
         handler = RotatingFileHandler(logs / "mobile.log", maxBytes=4*1048576, backupCount=3, encoding="utf-8")
         handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
         logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
+        stage("正在加载 API 与数据库模块")
         import uvicorn
         from mobile_http import MobileServer, MobileH11Protocol
         from admin.config import settings
@@ -95,6 +112,7 @@ def start(directory: str) -> str:
         settings.ADMIN_PASSWORD = config["password"]
         settings.JWT_SECRET = config["jwt_secret"]
         from admin.server import app
+        stage("正在绑定本地 API 端口")
         sock = socket.socket()
         try:
             # Reuse our listening port after accepted connections enter TIME_WAIT.
@@ -119,14 +137,23 @@ def start(directory: str) -> str:
             server = MobileServer(uvicorn.Config(app, host="0.0.0.0", port=port, log_config=None,
                                     access_log=False, loop="asyncio", http=MobileH11Protocol, ws="none",
                                     timeout_graceful_shutdown=5))
+            server.config.mobile_runtime = progress
             _server = server
+            startup_failure = []
             def serve():
                 try:
+                    if progress is not None:
+                        progress.prepareApiThread()
                     server.run(sockets=[sock])
+                except BaseException as error:
+                    from admin.request_metrics import exception_text
+                    startup_failure.append(exception_text(error))
+                    logging.getLogger(__name__).exception("本地服务线程退出")
                 finally:
                     sock.close()
             _thread = threading.Thread(target=serve, daemon=True, name="mobile-local-api")
             _thread.start()
+            stage("正在初始化数据库并等待 API 就绪")
             origin = f"http://127.0.0.1:{port}"
             opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
             deadline = time.monotonic() + 90
@@ -139,7 +166,8 @@ def start(directory: str) -> str:
                 except OSError:
                     time.sleep(.1)
             else:
-                raise RuntimeError("本地服务启动失败，请重新打开应用")
+                reason = startup_failure[-1] if startup_failure else "等待 API 就绪超过 90 秒" if _thread.is_alive() else "API 线程已退出，请查看本地服务日志"
+                raise RuntimeError("本地服务启动失败：" + reason + "（无需清除账号数据）")
             if config.get("port") != port:
                 config["port"] = port
                 atomic_json(path, config)

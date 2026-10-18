@@ -137,6 +137,7 @@ def init_db() -> bool:
         _ensure_column("usage_logs", "ttfb_ms", "INT", "NULL")
         _ensure_column("usage_logs", "latency_ms", "INT", "NULL")
         _ensure_column("usage_logs", "error_kind", "VARCHAR(32)", "DEFAULT ''")
+        _ensure_column("usage_logs", "diagnostic_json", "TEXT", "NULL")
 
         # 迁移：给 accounts 表加稳定性状态机字段
         _ensure_column("accounts", "err_count", "INT", "DEFAULT 0")

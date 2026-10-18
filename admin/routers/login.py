@@ -126,6 +126,7 @@ class SendIn(BaseModel):
 class VerifyIn(BaseModel):
     sid: str
     code: str
+    account_id: Optional[int] = None
     #: 是否在拿不到有效凭证时仍写入（**始终为 False** —— 保留字段只为让前端显式表态）
     force: bool = False
 
@@ -149,7 +150,7 @@ def _clean_nick(v) -> str:
     return "" if s.lower() in ("null", "none", "undefined") else s
 
 
-def _verify_and_store(sess, code: str, db: Session) -> dict:
+def _verify_and_store(sess, code: str, db: Session, account_id: Optional[int] = None) -> dict:
     """登录收尾的**唯一**实现：校验验证码 → 换凭证 → 双重校验 → 入池去重。
 
     管理端与公开自助端都走这里，**刻意不各写一份**：
@@ -162,10 +163,10 @@ def _verify_and_store(sess, code: str, db: Session) -> dict:
         result = wb_login.verify_sms(sess, code)
     except wb_login.WbLoginError as e:
         raise _fail(e, 502)
-    return _store_verified_credential(result["credential"], result["meta"] or {}, db)
+    return _store_verified_credential(result["credential"], result["meta"] or {}, db, account_id=account_id)
 
 
-def _store_verified_credential(credential: str, meta: dict, db: Session) -> dict:
+def _store_verified_credential(credential: str, meta: dict, db: Session, account_id: Optional[int] = None) -> dict:
     """凭证的**双重校验 + 入库去重**。
 
     「官方页面接力」路径也走这里 —— 无论凭证是服务端代跑出来的，
@@ -216,6 +217,14 @@ def _store_verified_credential(credential: str, meta: dict, db: Session) -> dict
     # 这里先在应用层堵住；`_find_dup` 也会兜住历史重复数据）。
     _uid_lock = _uid_write_lock(uid)
     with _uid_lock:
+        if account_id is not None:
+            from admin.routers.accounts import _reauthenticate_account
+            acc = _reauthenticate_account(db, account_id, credential, profile, balance)
+            db.commit()
+            return {"duplicated": True, "message": "原账号重新登录成功，历史记录与绑定已保留",
+                    "uid": acc.uid, "live_ok": live_ok, "live_msg": live_msg,
+                    "account": {"id": acc.id, "name": acc.name, "uid": acc.uid,
+                                "balance_total": acc.balance_total, "balance_remain": acc.balance_remain}}
         return _store_locked(credential, meta, balance, uid, db,
                              live_ok, live_msg)
 
@@ -398,7 +407,7 @@ def login_verify(
     except wb_login.WbLoginError as e:
         raise _fail(e, 502)
 
-    out = _verify_and_store(sess, body.code, db)
+    out = _verify_and_store(sess, body.code, db, account_id=body.account_id)
     return {
         "ok": True,
         "duplicated": out["duplicated"],

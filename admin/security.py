@@ -89,5 +89,5 @@ def check_quota(key: ApiKey) -> None:
     if not key.unlimited and key.credit_used >= key.credit_limit:
         raise HTTPException(
             status_code=402,
-            detail={"error": {"message": "积分已耗尽", "type": "quota_exceeded"}},
+            detail={"error": {"message": "当前 API Key 的额度已用完，请调整此 Key 的限额或联系管理员", "type": "quota_exceeded", "code": "key_quota_exceeded", "source": "gateway"}},
         )

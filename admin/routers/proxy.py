@@ -89,9 +89,9 @@ def _exc_text(e: BaseException) -> str:
     换号大概率无用）还是 `ConnectError`（连不上 —— 换号可能有用），
     而这两者的处置是相反的。带上类名就能一眼分辨。
     """
-    name = type(e).__name__
-    msg = str(e).strip()
-    return f"{name}: {msg}" if msg else name
+    if isinstance(e, httpx.TransportError):
+        request_metrics.mark_network_error(e)
+    return request_metrics.exception_text(e)
 
 # Responses API 适配器（converter 同款）；缺失时 /v1/responses 优雅降级为 501
 try:
@@ -413,8 +413,10 @@ def _record_usage(key_id: int, account_id: int, model: str, credits: float | Non
                 acc.last_used_at = datetime.utcnow()
                 if updated_auth_json and persist_auth:
                     acc.auth_json = updated_auth_json
+            diagnostic_json, attempted_account = request_metrics.usage_evidence(error_kind)
             log = UsageLog(
-                api_key_id=key_id, account_id=account_id, model=model, credits=credits,
+                diagnostic_json=diagnostic_json,
+                api_key_id=key_id, account_id=account_id or attempted_account, model=model, credits=credits,
                 prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
                 total_tokens=total_tokens, cached_tokens=cached_tokens,
                 client_ip=client_ip or "", use_case=use_case or "",
@@ -506,10 +508,9 @@ _CHAT_SEQ = itertools.count(1)
 
 def _log_chat_row(ttfb_ms, latency_ms, model, mode, uid, status, toks, error_kind=""):
     """向 stdout 打印一行表格日志，便于排查慢请求与风控。"""
-    if os.getenv('WORKBUDDY_ANDROID') == '1':
-        # This log's status is the gateway result. A final 503 must not replace
-        # the actual upstream 200/400/401 already recorded by account policy.
-        request_metrics.mark_upstream_error(error_kind or 'unknown', status if error_kind == 'success' else None)
+    # This status is the gateway result, distinct from received HTTP headers.
+    request_metrics.mark_gateway_result(status)
+    request_metrics.mark_upstream_error(error_kind or 'unknown', status if error_kind == 'success' else None)
     seq = next(_CHAT_SEQ)
     now = datetime.now().strftime("%H:%M:%S")
     model = (model or "-")[:11]
@@ -1141,7 +1142,7 @@ def _apply_account_policy(db: Session, acc: Account, kind: str, status: int,
       * waf          → 短冷却 + IP 级 fail-fast（见 pool.POOL.waf）
       * server/5xx   → 熔断，指数退避
       * not_found    → 短冷却，不累计 errCount（防雪崩）
-      * transport → 记录并累计连败；client → 只记录，不改变账号健康状态
+      * transport/client → 只记录，不改变账号健康状态
 
     每次**成功**都会清空连续失败计数（见 `_note_success`），所以偶发抖动不会
     累积成熔断 —— 只有真正持续坏的账号才会被摘出去。
@@ -1303,20 +1304,20 @@ def _apply_account_policy(db: Session, acc: Account, kind: str, status: int,
         # Request/model policy rejection must not cool or degrade the entire account.
         acc.last_err_at = now
         acc.last_err_msg = (msg or "model behavior policy")[:255]
+    elif _json_code(msg) == "11134":
+        # The provider for this model is temporarily unavailable. It proves
+        # neither an account failure nor exhaustion of the other models.
+        acc.last_err_at = now
+        acc.last_err_msg = (msg or "model provider temporarily unavailable")[:255]
     elif kind == "server" or status >= 500:
         # HTTP 5xx：熔断（指数退避），不再用「累计 5 次固定 10 分钟」——
         # 固定时长对持续坏的号太短（10 分钟后又被选中再失败），对偶发又太长。
         _bump_breaker(db, acc, now, msg or f"upstream {status}")
         acc.last_err_at = now
     elif kind == "transport":
-        # 网络层抖动：不累计 errCount（不是账号的错），但要计入连败降权 ——
-        # 「不知道原因的持续失败」正是降权的目标形态。
-        #
-        # 这里**必须**把真实异常留在 last_err_msg 里。原实现写的是
-        # `(msg or "transport error")`，而调用方有时传空串，于是库里只留下
-        # 一句「transport error」—— 排障时完全看不出是 ReadTimeout（流静默超时，
-        # 上游 180s 没吐字节）还是 ConnectError（连不上），两者的处置完全相反。
-        acc.consecutive_fails = (acc.consecutive_fails or 0) + 1
+        # A socket failure proves no account quota/auth state. In a one-account
+        # mobile pool, counting network errors towards account degradation
+        # turns an intermittent connection into five minutes of local 503s.
         acc.last_err_at = now
         acc.last_err_msg = (msg or "transport error")[:255]
     else:
@@ -1330,16 +1331,15 @@ def _apply_account_policy(db: Session, acc: Account, kind: str, status: int,
         db.commit()
     except Exception:
         db.rollback()
-    if os.getenv('WORKBUDDY_ANDROID') == '1':
-        evidence = upstream_errors.error_info(msg, status)
-        upstream_message = evidence['message']
-        if upstream_message is None and status:
-            upstream_message = evidence['raw']
-        request_metrics.mark_account_policy(acc.id, model, kind, status, evidence['code'],
-                                            message=upstream_message,
-                                            cool_until=acc.cool_until,
-                                            breaker_until=acc.breaker_until,
-                                            degrade_until=acc.degrade_until)
+    evidence = upstream_errors.error_info(msg, status)
+    upstream_message = evidence['message']
+    if upstream_message is None and status:
+        upstream_message = evidence['raw']
+    request_metrics.mark_account_policy(acc.id, model, kind, status, evidence['code'],
+                                        message=upstream_message, raw=evidence['raw'],
+                                        cool_until=acc.cool_until,
+                                        breaker_until=acc.breaker_until,
+                                        degrade_until=acc.degrade_until)
 
 
 def _note_success(db: Session, acc: Account) -> None:
@@ -2393,6 +2393,10 @@ async def chat_completions(
     try:
         check_quota(key)
     except Exception as e:
+        request_metrics.mark_gateway_error(e.status_code, e.detail)
+        kind = 'key_quota_exceeded' if e.status_code == 402 else 'key_disabled'
+        await _blocking_call(_record_usage, key.id, 0, '', 0.0, None,
+                             error_kind=kind, use_case='gateway-admission')
         return JSONResponse(status_code=e.status_code, content=e.detail)
 
     try:
@@ -2475,7 +2479,7 @@ async def chat_completions(
             tried_accounts = 0   # 供「全部失败」提示说明尝试规模
             tried_models_n = 0
 
-            async with upstream_http.client(request, _stream_timeout(), backend.HTTP_LIMITS) as client:
+            async with upstream_http.client(request, _stream_timeout(), backend.HTTP_LIMITS, retry_budget=retry_budget) as client:
                 for m in order:
                     if not retry_budget.available():
                         break
@@ -2505,6 +2509,7 @@ async def chat_completions(
                             continue
                         held_uid = acc_i.uid or ""
                         retry_budget.consume()
+                        request_metrics.mark_attempt(acc_i.id, m)
                         sess_i = await _account_session_async(db2, acc_i)
                         if sess_i is None:
                             POOL.release(held_uid)
@@ -2768,6 +2773,13 @@ async def chat_completions(
                             return
                         except Exception as e:
                             if delivered:
+                                _exc_text(e)
+                                request_metrics.mark_stream_error()
+                                latency_ms = int((time.perf_counter() - request_start) * 1000)
+                                seq = _log_chat_row(None, latency_ms, m, "stream", "-", 502, None, error_kind="transport")
+                                await _blocking_call(_record_usage, key.id, 0, m, 0.0, None,
+                                                     reasoning_effort=_reasoning_effort(payload), client_ip=_client_ip(request),
+                                                     use_case="chat-completion", seq=seq, latency_ms=latency_ms, error_kind="transport")
                                 # 已经往客户端发过字节：流式模式下无法「收回」，
                                 # 只能静默结束（客户端看到截断的流，符合 SSE 语义）。
                                 # 但聚合模式下我们还没产出任何东西，必须**如实报错**，
@@ -2884,6 +2896,10 @@ async def responses_proxy(
     try:
         check_quota(key)
     except Exception as e:
+        request_metrics.mark_gateway_error(e.status_code, e.detail)
+        kind = 'key_quota_exceeded' if e.status_code == 402 else 'key_disabled'
+        await _blocking_call(_record_usage, key.id, 0, '', 0.0, None,
+                             error_kind=kind, use_case='gateway-admission')
         return JSONResponse(status_code=e.status_code, content=e.detail)
 
     try:
@@ -2964,6 +2980,7 @@ async def responses_proxy(
                         continue
                     held_uid = acc_i.uid or ""
                     retry_budget.consume()
+                    request_metrics.mark_attempt(acc_i.id, m)
                     sess_i = await _account_session_async(db2, acc_i)
                     if sess_i is None:
                         POOL.release(held_uid)
@@ -2982,7 +2999,7 @@ async def responses_proxy(
                                      url, acc_i.uid[:12] if acc_i.uid else "?",
                                      ("OK(" + str(len(_dt)) + "ch)") if _dt else "MISSING",
                                      _ua, len(json.dumps(body, ensure_ascii=False)))
-                        async with upstream_http.client(request, _stream_timeout(), backend.HTTP_LIMITS) as client:
+                        async with upstream_http.client(request, _stream_timeout(), backend.HTTP_LIMITS, retry_budget=retry_budget) as client:
                             r = await client.post(url, headers=headers_i, json=body)
                             if r.status_code >= 400 or (r.status_code == 200 and _looks_like_inband_error(r.text)):
                                 _logger.warning("[forward] upstream %s | body=%s", r.status_code, r.text[:400])
@@ -3068,9 +3085,10 @@ async def responses_proxy(
                         await pool.rotate_backoff_async(rotate_idx)
                         rotate_idx += 1
                         continue
-            seq = _log_chat_row(None, None, resolved, "resp", "-", 503, None, error_kind="no_account")
+            err_kind = last_err_kind or "no_account"
+            seq = _log_chat_row(None, None, resolved, "resp", "-", 503, None, error_kind=err_kind)
             await _blocking_call(_record_usage, key.id, 0, resolved, 0.0, None,
-                          reasoning_effort=_reasoning_effort(payload), client_ip=_client_ip(request), use_case="responses", seq=seq, error_kind="no_account")
+                          reasoning_effort=_reasoning_effort(payload), client_ip=_client_ip(request), use_case="responses", seq=seq, error_kind=err_kind)
             if POOL.waf.active():
                 return JSONResponse(status_code=503, headers={"Retry-After": str(max(3, POOL.waf.remaining()))}, content={"error": {
                     "message": f"上游 WAF 拦截了网关出口 IP，已暂停轮转，请 {POOL.waf.remaining()}s 后重试",
@@ -3109,7 +3127,7 @@ async def responses_proxy(
                                            getattr(settings, "RETRY_WINDOW_SECONDS", 90))
             rotate_idx = 0
 
-            async with upstream_http.client(request, _stream_timeout(), backend.HTTP_LIMITS) as client:
+            async with upstream_http.client(request, _stream_timeout(), backend.HTTP_LIMITS, retry_budget=retry_budget) as client:
                 for m in order:
                     if not retry_budget.available():
                         break
@@ -3133,6 +3151,7 @@ async def responses_proxy(
                             continue
                         held_uid = acc_i.uid or ""
                         retry_budget.consume()
+                        request_metrics.mark_attempt(acc_i.id, m)
                         sess_i = await _account_session_async(db2, acc_i)
                         if sess_i is None:
                             POOL.release(held_uid)
@@ -3260,6 +3279,13 @@ async def responses_proxy(
                             return
                         except Exception as e:
                             if delivered:
+                                _exc_text(e)
+                                request_metrics.mark_stream_error()
+                                latency_ms = int((time.perf_counter() - request_start) * 1000)
+                                seq = _log_chat_row(None, latency_ms, m, "stream", "-", 502, None, error_kind="transport")
+                                await _blocking_call(_record_usage, key.id, 0, m, 0.0, None,
+                                                     reasoning_effort=_reasoning_effort(payload), client_ip=_client_ip(request),
+                                                     use_case="responses", seq=seq, latency_ms=latency_ms, error_kind="transport")
                                 yield 'event: error\ndata: ' + json.dumps({"type": "error", "error": {
                                     "message": "上游流中断，请重试", "type": "server_error", "code": "upstream_stream_interrupted"}}, ensure_ascii=False) + '\n\n'
                                 sess_i.close()
@@ -3334,6 +3360,10 @@ async def anthropic_messages(
     try:
         check_quota(key)
     except Exception as e:
+        request_metrics.mark_gateway_error(e.status_code, e.detail)
+        kind = 'key_quota_exceeded' if e.status_code == 402 else 'key_disabled'
+        await _blocking_call(_record_usage, key.id, 0, '', 0.0, None,
+                             error_kind=kind, use_case='gateway-admission')
         return JSONResponse(status_code=e.status_code, content=e.detail)
 
     try:
@@ -3425,6 +3455,7 @@ async def anthropic_messages(
                         continue
                     held_uid = acc_i.uid or ""
                     retry_budget.consume()
+                    request_metrics.mark_attempt(acc_i.id, m)
                     sess_i = await _account_session_async(db2, acc_i)
                     if sess_i is None:
                         POOL.release(held_uid)
@@ -3443,7 +3474,7 @@ async def anthropic_messages(
                                      url, acc_i.uid[:12] if acc_i.uid else "?",
                                      ("OK(" + str(len(_dt)) + "ch)") if _dt else "MISSING",
                                      _ua, len(json.dumps(body, ensure_ascii=False)))
-                        async with upstream_http.client(request, _stream_timeout(), backend.HTTP_LIMITS) as client:
+                        async with upstream_http.client(request, _stream_timeout(), backend.HTTP_LIMITS, retry_budget=retry_budget) as client:
                             r = await client.post(url, headers=headers_i, json=body)
                             if r.status_code >= 400 or (r.status_code == 200 and _looks_like_inband_error(r.text)):
                                 _logger.warning("[forward] upstream %s | body=%s", r.status_code, r.text[:400])
@@ -3530,10 +3561,11 @@ async def anthropic_messages(
                         await pool.rotate_backoff_async(rotate_idx)
                         rotate_idx += 1
                         continue
-            seq = _log_chat_row(None, None, resolved, "anthropic", "-", 503, None, error_kind="no_account")
+            err_kind = last_err_kind or "no_account"
+            seq = _log_chat_row(None, None, resolved, "anthropic", "-", 503, None, error_kind=err_kind)
             await _blocking_call(_record_usage, key.id, 0, resolved, 0.0, None,
                           reasoning_effort=_reasoning_effort(payload), client_ip=_client_ip(request), use_case="anthropic",
-                          seq=seq, error_kind="no_account")
+                          seq=seq, error_kind=err_kind)
             if POOL.waf.active():
                 return JSONResponse(status_code=503, headers={"Retry-After": str(max(3, POOL.waf.remaining()))}, content={"type": "error", "error": {
                     "message": f"上游 WAF 拦截了网关出口 IP，已暂停轮转，请 {POOL.waf.remaining()}s 后重试",
@@ -3572,7 +3604,7 @@ async def anthropic_messages(
                                            getattr(settings, "RETRY_WINDOW_SECONDS", 90))
             rotate_idx = 0
 
-            async with upstream_http.client(request, _stream_timeout(), backend.HTTP_LIMITS) as client:
+            async with upstream_http.client(request, _stream_timeout(), backend.HTTP_LIMITS, retry_budget=retry_budget) as client:
                 for m in order:
                     if not retry_budget.available():
                         break
@@ -3596,6 +3628,7 @@ async def anthropic_messages(
                             continue
                         held_uid = acc_i.uid or ""
                         retry_budget.consume()
+                        request_metrics.mark_attempt(acc_i.id, m)
                         sess_i = await _account_session_async(db2, acc_i)
                         if sess_i is None:
                             POOL.release(held_uid)
@@ -3738,6 +3771,13 @@ async def anthropic_messages(
                             return
                         except Exception as e:
                             if delivered:
+                                _exc_text(e)
+                                request_metrics.mark_stream_error()
+                                latency_ms = int((time.perf_counter() - request_start) * 1000)
+                                seq = _log_chat_row(None, latency_ms, m, "stream", "-", 502, None, error_kind="transport")
+                                await _blocking_call(_record_usage, key.id, 0, m, 0.0, None,
+                                                     reasoning_effort=_reasoning_effort(payload), client_ip=_client_ip(request),
+                                                     use_case="anthropic", seq=seq, latency_ms=latency_ms, error_kind="transport")
                                 yield conv.error_event("上游流中断，请重试", "api_error")
                                 sess_i.close()
                                 POOL.release(held_uid)

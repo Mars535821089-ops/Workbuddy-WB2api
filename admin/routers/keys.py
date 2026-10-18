@@ -3,7 +3,7 @@ import base64
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -17,8 +17,8 @@ router = APIRouter(prefix="/api/keys", tags=["keys"])
 
 class KeyIn(BaseModel):
     name: str = ""
-    credit_limit: float = 0
-    unlimited: bool = False
+    credit_limit: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    unlimited: bool | None = None
     note: str = ""
     group_id: int = 0  # 0 = 不绑定分组（可用全部启用模型）
     account_id: int | None = None  # 0 / NULL = 公共池
@@ -104,8 +104,8 @@ def create_key(body: KeyIn, _: bool = Depends(require_admin), db: Session = Depe
         key_hash=hash_key(raw),
         key_prefix=raw[:14],
         key_full=_encode_key(raw),
-        credit_limit=body.credit_limit,
-        unlimited=1 if body.unlimited else 0,
+        credit_limit=body.credit_limit if body.credit_limit is not None else 0,
+        unlimited=int(body.credit_limit is None or body.unlimited is True),
         max_concurrent=_normalize_max_concurrent(body.max_concurrent),
         note=body.note,
         group_id=gid,
@@ -176,9 +176,25 @@ def patch_key(key_id: int, body: dict, _: bool = Depends(require_admin), db: Ses
     if "name" in body:
         k.name = body["name"]
     if "credit_limit" in body:
-        k.credit_limit = float(body["credit_limit"])
+        value = body["credit_limit"]
+        if value is None or value == "":
+            k.credit_limit = 0
+            k.unlimited = 1
+        else:
+            import math
+            try:
+                value = float(value)
+                if not math.isfinite(value) or value < 0:
+                    raise ValueError()
+            except (ValueError, TypeError):
+                raise HTTPException(400, "Key 额度必须为空或大于等于 0 的有限数字") from None
+            k.credit_limit = value
+            k.unlimited = 0
     if "unlimited" in body:
-        k.unlimited = 1 if body["unlimited"] else 0
+        if body["unlimited"]:
+            k.unlimited = 1
+        elif "credit_limit" not in body or body["credit_limit"] not in (None, ""):
+            k.unlimited = 0
     if "max_concurrent" in body:
         k.max_concurrent = _normalize_max_concurrent(body["max_concurrent"])
     if "status" in body and body["status"] in ("active", "revoked"):

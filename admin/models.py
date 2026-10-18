@@ -115,7 +115,7 @@ class ApiKey(Base):
     key_full = Column(String(2048), default="")  # 完整密钥（仅管理后台查看用，base64 编码存储）
     credit_limit = Column(Float, default=0)  # 限额（credits）；unlimited=True 时忽略
     credit_used = Column(Float, default=0)
-    unlimited = Column(Integer, default=0)  # 0/1
+    unlimited = Column(Integer, default=1)  # New keys default to unlimited; existing limits are preserved.
     # 该 Key 并发上限：NULL=跟随全局 ADMIN_GATEWAY_MAX_CONCURRENT；0=不限；N=最多 N 路在途
     # 注意：这是准入层限制，与账号层 ADMIN_POOL_MAX_IN_FLIGHT（防单号雪崩）相互独立。
     max_concurrent = Column(Integer, nullable=True, default=None)
@@ -198,6 +198,7 @@ class UsageLog(Base):
     ttfb_ms = Column(Integer, nullable=True, default=None)
     latency_ms = Column(Integer, nullable=True, default=None)
     error_kind = Column(String(32), default="")  # hard_credit | soft_rate | server | not_found | session_dead | transport | client | success
+    diagnostic_json = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

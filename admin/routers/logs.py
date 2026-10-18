@@ -35,12 +35,13 @@
 """
 import csv
 import io
-from datetime import datetime, timedelta
+import json
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Response
-from sqlalchemy import func, or_
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, Response, HTTPException
+from sqlalchemy import func, or_, case
+from sqlalchemy.orm import Session, defer
 
 from admin.db import get_db
 from admin.models import Account, ApiKey, UsageLog
@@ -94,7 +95,7 @@ def _name_maps(db: Session, key_ids: set[int], acc_ids: set[int]) -> tuple[dict,
 
 
 def _build_filters(q, *, key_id, account_ids, models, model, key, account,
-                   client_ip, start, end, db: Session):
+                   client_ip, start, end, db: Session, result=None):
     """构造统一的 where 条件（列表与导出共用，保证口径一致）。
 
     返回 `(query, short_circuit)`：`short_circuit=True` 表示「筛选条件不可能
@@ -131,10 +132,25 @@ def _build_filters(q, *, key_id, account_ids, models, model, key, account,
         q = q.filter(UsageLog.account_id.in_(aids))
     if client_ip:
         q = q.filter(UsageLog.client_ip.like(f"%{client_ip}%"))
+    def timestamp(value):
+        if not isinstance(value, str):
+            return value
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return parsed.astimezone(timezone.utc).replace(tzinfo=None) if parsed.tzinfo else parsed
+        except ValueError:
+            raise HTTPException(400, "日志时间格式无效") from None
     if start:
+        start = timestamp(start)
         q = q.filter(UsageLog.created_at >= start)
     if end:
+        end = timestamp(end)
         q = q.filter(UsageLog.created_at <= end)
+    success = func.coalesce(UsageLog.error_kind, "").in_(("", "success"))
+    if result == "error":
+        q = q.filter(~success)
+    elif result == "success":
+        q = q.filter(success)
     return q, False
 
 
@@ -143,7 +159,7 @@ def _serialize(rows, key_names: dict, acc_names: dict) -> list[dict]:
         {
             "id": r.id,
             "key_name": key_names.get(r.api_key_id) or f"#{r.api_key_id}",
-            "account_name": acc_names.get(r.account_id) or f"#{r.account_id}",
+            "account_name": acc_names.get(r.account_id) or (f"#{r.account_id}" if r.account_id else "未记录账号 / 未选号"),
             "model": r.model,
             "credits": r.credits,
             "prompt_tokens": r.prompt_tokens,
@@ -176,6 +192,7 @@ def list_logs(
     start: Optional[str] = None,  # 起始时间 YYYY-MM-DD HH:MM:SS
     end: Optional[str] = None,
     before_id: Optional[int] = None,  # keyset 分页游标（深翻页用，比 OFFSET 快）
+    result: Optional[str] = None,
     with_total: bool = True,          # 深翻页时可关掉总数统计省一次扫描
     _: bool = Depends(require_admin),
     db: Session = Depends(get_db),
@@ -201,19 +218,23 @@ def list_logs(
     name_term = account if not account_id else None
 
     q, short = _build_filters(
-        db.query(UsageLog),
+        db.query(UsageLog).options(defer(UsageLog.diagnostic_json)),
         key_id=key_id, account_ids=account_ids, models=None, model=model,
         key=key, account=name_term,
-        client_ip=client_ip, start=start, end=end, db=db,
+        client_ip=client_ip, start=start, end=end, db=db, result=result,
     )
 
     if short:
         return {"items": [], "total": 0, "page": page,
+                "stats": {"total": 0, "success": 0, "error": 0} if with_total and before_id is None else None,
                 "page_size": page_size, "has_more": False, "next_before_id": None}
 
     total = None
+    stats = None
     if with_total and before_id is None:
-        total = q.count()
+        total, successes = q.with_entities(func.count(UsageLog.id), func.coalesce(func.sum(case(
+            (func.coalesce(UsageLog.error_kind, "").in_(("", "success")), 1), else_=0)), 0)).one()
+        stats = {"total": total, "success": int(successes), "error": total - int(successes)}
 
     # keyset 分页优先；否则退回 OFFSET
     if before_id is not None:
@@ -235,6 +256,7 @@ def list_logs(
     return {
         "items": _serialize(rows, key_names, acc_names),
         "total": total,                     # None = 本次未统计
+        "stats": stats,
         "page": page,
         "page_size": page_size,
         "has_more": has_more,
@@ -254,6 +276,8 @@ def export_logs(
     start: Optional[str] = None,
     end: Optional[str] = None,
     limit: int = 50000,
+    result: Optional[str] = None,
+    diagnostics: bool = False,
     _: bool = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -264,22 +288,24 @@ def export_logs(
     默认 5 万行，配合时间范围筛选足够覆盖正常对账需求。
     """
     limit = max(1, min(200000, int(limit or 50000)))
+    if diagnostics:
+        limit = min(limit, 1000)
 
     account_ids = [account_id] if account_id else None
     name_term = account if not account_id else None
 
     q, short = _build_filters(
-        db.query(UsageLog),
+        db.query(UsageLog) if diagnostics else db.query(UsageLog).options(defer(UsageLog.diagnostic_json)),
         key_id=key_id, account_ids=account_ids, models=None, model=model,
         key=key, account=name_term,
-        client_ip=client_ip, start=start, end=end, db=db,
+        client_ip=client_ip, start=start, end=end, db=db, result=result,
     )
 
     buf = io.StringIO()
     buf.write("\ufeff")  # UTF-8 BOM，保证 Excel 正确识别中文
     w = csv.writer(buf)
     w.writerow(["ID", "Key", "账号", "模型", "积分", "提示tokens", "补全tokens", "缓存tokens", "总tokens",
-                "TTFB(ms)", "总耗时(ms)", "结果", "客户端IP", "用途", "思考强度(请求)", "时间(北京)"])
+                "TTFB(ms)", "总耗时(ms)", "结果", "客户端IP", "用途", "思考强度(请求)", "时间(北京)"] + (["诊断JSON（含上游响应及本地错误）"] if diagnostics else []))
 
     if not short:
         rows = q.order_by(UsageLog.id.desc()).limit(limit).all()
@@ -297,7 +323,7 @@ def export_logs(
             w.writerow([
                 r.id,
                 key_names.get(r.api_key_id) or f"#{r.api_key_id}",
-                acc_names.get(r.account_id) or f"#{r.account_id}",
+                acc_names.get(r.account_id) or (f"#{r.account_id}" if r.account_id else "未记录账号 / 未选号"),
                 r.model,
                 r.credits,
                 r.prompt_tokens if r.prompt_tokens is not None else "",
@@ -311,7 +337,7 @@ def export_logs(
                 r.use_case or "",
                 r.reasoning_effort or "",
                 t_str,
-            ])
+            ] + ([r.diagnostic_json or ""] if diagnostics else []))
     return Response(
         content=buf.getvalue(),
         media_type="text/csv",
@@ -379,80 +405,62 @@ def log_accounts(
 
 @router.get("/summary")
 def log_summary(
-    days: int = 1,
-    account_id: Optional[int] = None,
-    key_id: Optional[int] = None,
-    model: Optional[str] = None,
-    _: bool = Depends(require_admin),
-    db: Session = Depends(get_db),
+    days: int = 1, account_id: Optional[int] = None,
+    key_id: Optional[int] = None, model: Optional[str] = None,
+    key: Optional[str] = None, account: Optional[str] = None,
+    client_ip: Optional[str] = None, start: Optional[str] = None,
+    end: Optional[str] = None, result: Optional[str] = None,
+    _: bool = Depends(require_admin), db: Session = Depends(get_db),
 ):
-    """**按账号**的用量汇总（与列表共用同一套筛选口径）。
-
-    这是「按账号查询使用记录」的答案：与其让用户翻几十页日志去数，
-    不如直接给他每个号的请求数 / 积分 / token / 成功率 / 平均耗时。
-    统计全部在 SQL 侧聚合，不把明细拉到 Python。
-    """
-    since = datetime.utcnow() - timedelta(days=max(1, days))
-
+    success = func.coalesce(UsageLog.error_kind, "").in_(("", "success"))
     q = db.query(
-        UsageLog.account_id,
-        func.count(UsageLog.id),
+        UsageLog.account_id, func.count(UsageLog.id),
         func.coalesce(func.sum(UsageLog.credits), 0.0),
         func.coalesce(func.sum(UsageLog.total_tokens), 0),
         func.coalesce(func.sum(UsageLog.prompt_tokens), 0),
         func.coalesce(func.sum(UsageLog.completion_tokens), 0),
         func.coalesce(func.sum(UsageLog.cached_tokens), 0),
-        func.avg(UsageLog.latency_ms),
-        func.max(UsageLog.created_at),
-    ).filter(UsageLog.created_at >= since)
-    if account_id is not None:
-        q = q.filter(UsageLog.account_id == account_id)
-    if key_id is not None:
-        q = q.filter(UsageLog.api_key_id == key_id)
-    if model:
-        q = q.filter(UsageLog.model == model)
-
-    rows = (q.group_by(UsageLog.account_id)
-            .order_by(func.coalesce(func.sum(UsageLog.credits), 0.0).desc())
-            .all())
-
-    # 失败数单独算一次：`error_kind` 的「成功」判定是「空串或 success」，
-    # 用条件聚合表达更清晰，也避免在 MySQL 上踩 func.if_ 的方言问题。
-    fail_rows = dict(
-        db.query(UsageLog.account_id, func.count(UsageLog.id))
-        .filter(UsageLog.created_at >= since,
-                ~UsageLog.error_kind.in_(("", "success")))
-        .group_by(UsageLog.account_id).all())
-
-    ids = [r[0] for r in rows]
-    names: dict[int, str] = {}
-    if ids:
-        for a in db.query(Account.id, Account.name, Account.uid).filter(
-                Account.id.in_(ids)).all():
-            names[a[0]] = a[1] or a[2] or f"#{a[0]}"
-
+        func.avg(UsageLog.latency_ms), func.max(UsageLog.created_at),
+        func.coalesce(func.sum(case((success, 0), else_=1)), 0),
+    )
+    if not start and days > 0:
+        start = datetime.utcnow() - timedelta(days=days)
+    q, short = _build_filters(q, key_id=key_id,
+        account_ids=[account_id] if account_id is not None else None,
+        models=None, model=model, key=key, account=account,
+        client_ip=client_ip, start=start, end=end, db=db, result=result)
+    rows = [] if short else q.group_by(UsageLog.account_id).order_by(
+        func.coalesce(func.sum(UsageLog.credits), 0.0).desc()).all()
+    _, names = _name_maps(db, set(), {r[0] for r in rows if r[0]})
     items = []
-    for (aid, reqs, credits_used, ttok, ptok, ctok, cached,
-         avg_lat, last) in rows:
-        fails = int(fail_rows.get(aid) or 0)
+    for aid, reqs, credits, ttok, ptok, ctok, cached, avg_lat, last, fails in rows:
         items.append({
             "account_id": aid,
-            "account_name": names.get(aid) or f"#{aid}",
-            "requests": int(reqs or 0),
-            "failed_requests": fails,
-            "ok_requests": max(0, int(reqs or 0) - fails),
-            "credits": round(float(credits_used or 0), 4),
-            "total_tokens": int(ttok or 0),
-            "prompt_tokens": int(ptok or 0),
-            "completion_tokens": int(ctok or 0),
-            "cached_tokens": int(cached or 0),
-            "avg_latency_ms": int(avg_lat) if avg_lat else 0,
+            "account_name": names.get(aid) or (f"#{aid}" if aid else "未记录账号 / 未选号"),
+            "requests": int(reqs), "failed_requests": int(fails),
+            "ok_requests": int(reqs - fails), "credits": round(float(credits), 4),
+            "total_tokens": int(ttok), "prompt_tokens": int(ptok),
+            "completion_tokens": int(ctok), "cached_tokens": int(cached),
+            "avg_latency_ms": int(avg_lat or 0),
             "last_used_at": last.isoformat() if last else None,
         })
+    return {"range_days": days, "total_requests": sum(i["requests"] for i in items),
+            "ok_requests": sum(i["ok_requests"] for i in items),
+            "failed_requests": sum(i["failed_requests"] for i in items),
+            "account_count": sum(1 for i in items if i["account_id"]),
+            "unattributed_requests": sum(i["requests"] for i in items if not i["account_id"]),
+            "total_credits": round(sum(i["credits"] for i in items), 4), "items": items}
 
-    return {
-        "range_days": days,
-        "total_requests": sum(i["requests"] for i in items),
-        "total_credits": round(sum(i["credits"] for i in items), 4),
-        "items": items,
-    }
+
+@router.get("/{log_id}")
+def log_detail(log_id: int, db: Session = Depends(get_db), _=Depends(require_admin)):
+    row = db.query(UsageLog).filter(UsageLog.id == log_id).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="使用记录不存在")
+    keys, accounts = _name_maps(db, {row.api_key_id}, {row.account_id})
+    item = _serialize([row], keys, accounts)[0]
+    try:
+        item["diagnostic"] = json.loads(row.diagnostic_json) if row.diagnostic_json else None
+    except (TypeError, ValueError):
+        item["diagnostic"] = None
+    return item

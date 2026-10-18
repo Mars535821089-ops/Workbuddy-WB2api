@@ -109,9 +109,8 @@ async def _security_headers(request: Request, call_next):
 
 app.add_middleware(GatewayAdmissionMiddleware)
 
-if os.getenv("WORKBUDDY_ANDROID") == "1":
-    from admin.request_metrics import TimingMiddleware
-    app.add_middleware(TimingMiddleware)
+from admin.request_metrics import TimingMiddleware
+app.add_middleware(TimingMiddleware)
 
 
 @app.on_event("startup")
