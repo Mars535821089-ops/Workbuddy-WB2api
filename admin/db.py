@@ -147,6 +147,7 @@ def init_db() -> bool:
         _ensure_column("accounts", "last_err_msg", "VARCHAR(255)", "DEFAULT ''")
         _ensure_column("accounts", "last_upstream_error", "TEXT", "NULL")
         _ensure_column("accounts", "selection_priority", "INT", "NULL")
+        _ensure_column("accounts", "max_in_flight", "INT", "NULL")
         _ensure_column("account_model_cool", "upstream_error", "TEXT", "NULL")
         _ensure_column("account_model_cool", "reset_source", "VARCHAR(24)", "DEFAULT ''")
         _ensure_column("accounts", "last_picked_at", "DATETIME", "NULL")

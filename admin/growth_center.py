@@ -56,10 +56,16 @@ def stamp():
 
 
 def record_result(db, account_id, result, *, source="schedule", action="巡检"):
+    import uuid
+    result = dict(result)
+    result.setdefault("credit_event_key", "reward:" + uuid.uuid4().hex)
     record = GrowthPlanRecord(account_id=account_id, source=source, action=action,
                              ok=int(bool(result.get("ok"))), credit=int(result.get("credit") or 0),
                              result_json=json.dumps(result, ensure_ascii=False))
     db.add(record)
+    db.flush()
+    from admin.credit_journal import record_rewards
+    record_rewards(db, record)
     db.commit()
     return record.id
 

@@ -1296,7 +1296,7 @@ def _chat_body_desensitize(body: dict, *, force_compact: bool = False) -> dict:
         desensitize_harness_user=True,
         desensitize_tools=True,
         compact_harness=(force_compact or not CONFIG.get("no_compact")),
-        strip_tool_metadata=True,
+        strip_tool_metadata=False,
     )
 
 

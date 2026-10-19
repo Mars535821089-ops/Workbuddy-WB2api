@@ -207,7 +207,9 @@ docker compose --env-file .env.docker --profile standalone up -d --build
 
 升级执行 `git pull`，再执行 `up -d --build`。`docker compose down` 保留数据，**不要添加 `-v`**。旧版 MySQL 数据不会自动迁入 SQLite；迁移前先备份。沿用 MySQL 时用 Compose override 覆盖 `ADMIN_DATABASE_URL`，地址须从容器内可达。
 
-备份 SQLite：
+管理台的「更新与备份」可以检查 GitHub 正式版本、查看 Docker/Linux 升级命令，并下载经过完整性校验的 SQLite 在线备份。MySQL 部署会提供备份命令说明，需先用数据库工具完成备份。当前采用版本检查和手动执行升级，不会从 Web 服务控制宿主机或 Docker。
+
+也可以通过命令行备份 SQLite：
 
 ```bash
 docker compose --env-file .env.docker stop admin
@@ -216,6 +218,10 @@ docker compose --env-file .env.docker start admin
 ```
 
 容器内检测到的 IP 可能属于 Docker 网桥。远程接入优先使用浏览器当前访问的服务器地址及映射端口；需要局域网访问时填写宿主机 IP。
+
+管理台「积分流水」分别展示上游确认的奖励和余额变化观察，支持账号、来源、类型、时间范围筛选及分页。签到、成长奖励和补偿都会记录来源；无法确认来源的余额变化标记为未知，不与奖励记录相加。升级前已保存的成长记录可分批导入，更早未保存的来源及奖励后余额无法恢复。
+
+账号池操作中的「账号并发上限」支持留空跟随全局、`0` 不限、正整数限制在途请求数。全局默认仍为 `ADMIN_POOL_MAX_IN_FLIGHT=3`；这是网关本地的并发保护，不代表上游提供的配额。维护中的账号始终暂停接入。
 
 ## 源码运行
 

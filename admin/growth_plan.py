@@ -28,13 +28,14 @@ def _read(db, key):
         return {}
 
 
-def _write(db, key, value):
+def _write(db, key, value, *, commit=True):
     row = db.get(SystemSetting, key)
     if row is None:
         row = SystemSetting(key=key)
         db.add(row)
     row.value = json.dumps(value, ensure_ascii=False)
-    db.commit()
+    if commit:
+        db.commit()
 
 
 class _Lease:
@@ -377,6 +378,7 @@ def run_growth_plan(db, *, budget_seconds=180, progress=None, now=None, lease=No
                         account.balance_total = int(balance.get("total") or 0)
                         account.balance_remain = int(balance.get("remain") or 0)
                         account.last_sync_at = datetime.utcnow()
+                        result["balance_after"] = account.balance_remain
                         _sync_credit_snapshot(account, sess.fetch_credit_details())
                     except Exception:
                         result["resource_refresh_failed"] = True

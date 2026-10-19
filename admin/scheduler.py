@@ -587,11 +587,15 @@ def run_daily_checkin(db, schedule: "Schedule | None" = None) -> dict:
                         credit = int(res.get("credit") or 0)
                         claimed += 1
                         total_credit += credit
+                        from admin.growth_center import record_result
+                        reward_record = record_result(db, a.id, {"ok": True, "credit": credit}, source="schedule", action="每日打卡")
                         try:
                             from admin.routers.accounts import _sync_credit_snapshot
                             balance = sess.fetch_balance()
                             a.balance_total = int(balance.get("total") or 0)
                             a.balance_remain = int(balance.get("remain") or 0)
+                            from admin.credit_journal import attach_balance
+                            attach_balance(db, [reward_record], a.balance_remain)
                             a.last_sync_at = datetime.utcnow()
                             _sync_credit_snapshot(a, sess.fetch_credit_details())
                         except Exception as error:

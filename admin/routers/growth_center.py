@@ -290,6 +290,7 @@ def action(aid: int, body: ActionIn, db: Session = Depends(get_db)):
                         account.balance_total = int(balance.get("total") or 0)
                         account.balance_remain = int(balance.get("remain") or 0)
                         account.last_sync_at = datetime.utcnow()
+                        result["journal_balance_after"] = account.balance_remain
                         _sync_credit_snapshot(account, sess.fetch_credit_details())
                     except Exception:
                         snapshot["resources_stale"] = True
@@ -303,6 +304,7 @@ def action(aid: int, body: ActionIn, db: Session = Depends(get_db)):
                     prize = data.get("prize") or data
                     message += "：" + str(prize.get("prize_name") or prize.get("name") or "请查看官方抽奖记录")
                 response = {"ok": bool(result.get("ok")), "credit": credit, "reason": message,
+                            "balance_after": result.get("journal_balance_after"),
                             "steps": [{"step": label, "ok": bool(result.get("ok")), "message": message, "reward": credit}]}
                 record_result(db, aid, response, source="manual", action=label)
                 _write(db, key, state)

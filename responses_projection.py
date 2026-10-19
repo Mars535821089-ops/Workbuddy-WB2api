@@ -21,6 +21,7 @@ Codex CLI 会把大量运行时提示、完整工具 schema、长历史、以及
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 
@@ -98,6 +99,11 @@ SCHEMA_KEEP_KEYS = {
     "minLength",
     "maxLength",
     "nullable",
+    "description",
+    "const",
+    "$defs",
+    "$ref",
+    "definitions",
 }
 
 
@@ -147,15 +153,25 @@ def project_responses_chat_body(body: dict) -> tuple[dict, dict]:
             continue
 
         if role == "user" and _looks_like_harness_user(text):
-            dropped_harness_messages += 1
-            continue
+            # Strip complete runtime blocks, never a mixed real user request.
+            def clean(value):
+                for tag in ("environment_context", "permissions instructions", "collaboration_mode", "skills_instructions", "system-reminder"):
+                    value = re.sub(r"<" + tag + r">.*?</" + tag + r">", "", value, flags=re.S)
+                return value.strip()
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                content = clean(content)
+            elif isinstance(content, list):
+                content = [dict(part, text=clean(part["text"])) if isinstance(part, dict) and isinstance(part.get("text"), str) else part for part in content]
+            if not content or (isinstance(content, list) and not any(p.get("text") or p.get("image_url") for p in content if isinstance(p, dict))):
+                dropped_harness_messages += 1
+                continue
+            msg = dict(msg, content=content)
 
         projected_msg = _project_conversation_message(msg)
         if projected_msg is not None:
             conversation.append(projected_msg)
 
-    if not conversation:
-        conversation = _project_messages_conservative(messages)
 
     tail_start = _choose_tail_start(conversation)
     tail_start = _expand_tail_for_tool_context(conversation, tail_start)
@@ -245,7 +261,11 @@ def _project_conversation_message(msg: dict, conservative: bool = False) -> dict
 
     if role == "user":
         text = _content_to_text(msg.get("content", ""))
-        out["content"] = _truncate_text(text, MAX_USER_CHARS)
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            out["content"] = [dict(p, text=_truncate_text(p["text"], MAX_USER_CHARS)) if isinstance(p, dict) and isinstance(p.get("text"), str) else p for p in content]
+        else:
+            out["content"] = _truncate_text(text, MAX_USER_CHARS)
         return out
 
     if role == "assistant":
@@ -360,6 +380,8 @@ def _project_tools(tools: list[dict]) -> tuple[list[dict], dict]:
             continue
 
         projected_function: dict[str, Any] = {"name": name}
+        if function.get("description"):
+            projected_function["description"] = _truncate_text(str(function["description"]), 1600)
         if "parameters" in function:
             projected_function["parameters"] = _project_schema(function.get("parameters"))
         if "strict" in function:
@@ -389,6 +411,10 @@ def _project_schema(schema: Any, depth: int = 0) -> Any:
                     prop: _project_schema(prop_schema, depth + 1)
                     for prop, prop_schema in value.items()
                 }
+            elif key in {"$defs", "definitions"} and isinstance(value, dict):
+                out[key] = {name: _project_schema(item, depth + 1) for name, item in value.items()}
+            elif key == "description":
+                out[key] = _truncate_text(str(value), 600)
             elif key == "items":
                 out["items"] = _project_schema(value, depth + 1)
             elif key in {"oneOf", "anyOf", "allOf"} and isinstance(value, list):

@@ -95,6 +95,7 @@ def _refresh_resources(account, session, result):
         balance = session.fetch_balance()
         account.balance_total = int(balance.get('total') or 0)
         account.balance_remain = int(balance.get('remain') or 0)
+        result['balance_after'] = account.balance_remain
         account.last_sync_at = datetime.utcnow()
         summary = _sync_credit_snapshot(account, session.fetch_credit_details())
         collection = summary.get('collection') or {}
@@ -176,11 +177,18 @@ def process_account(db, account, *, claim=True, source='manual', discover=False)
                     if result.get('claimed'):
                         # Save success before refreshing resources. A failed balance
                         # request must never cause a second compensation grant attempt.
-                        _write(db, key, result)
+                        _write(db, key, result, commit=False)
+                        reward_record = None
+                        if int(result.get('credit') or 0) > 0:
+                            result['credit_event_key'] = 'benefit:' + hashlib.sha256(key.encode()).hexdigest()
+                            reward_record = record_result(db, account.id, result, source=source, action='权益获取' if discover else TITLE)
+                        else:
+                            db.commit()
                         _refresh_resources(account, session, result)
+                        if reward_record and result.get('balance_after') is not None:
+                            from admin.credit_journal import attach_balance
+                            attach_balance(db, [reward_record], result['balance_after'])
                     _write(db, key, result)
-                    if result['status'] == 'claimed':
-                        record_result(db, account.id, result, source=source, action='权益获取' if discover else TITLE)
                     return result
                 finally:
                     # Do not overwrite a new login completed during the upstream call.

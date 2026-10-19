@@ -177,6 +177,17 @@ button:focus-visible, summary:focus-visible { outline:2px solid var(--brand-ink)
 .billing-state { display:block; margin-top:4px; font-size:11px; color:var(--fg-muted); cursor:help; }
 [data-account-batch]:disabled { opacity:.55; cursor:wait; }
 #accountJobStatus[hidden] { display:none; }
+#panel-journal select, #panel-journal input, #accountInFlight {
+  border:1px solid var(--border); border-radius:8px; padding:7px 9px;
+  background:var(--surface); color:var(--fg); max-width:100%;
+}
+#panel-journal label { display:flex; align-items:center; gap:6px; }
+#journalPage { align-self:center; font-size:13px; color:var(--fg-muted); }
+#maintenanceInfo h3 { font-size:16px; font-weight:600; }
+#maintenanceInfo p { color:var(--fg-muted); line-height:1.7; }
+#maintenanceInfo a { color:var(--accent, #2563eb); text-decoration:underline; }
+#maintenanceInfo summary { cursor:pointer; padding:8px 0; }
+#maintenanceInfo pre { border:1px solid var(--border); border-radius:8px; font-size:12px; }
 @media (prefers-reduced-motion:reduce) {
   *, *::before, *::after { animation:none !important; transition:none !important; }
 }

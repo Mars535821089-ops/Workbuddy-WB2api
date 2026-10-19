@@ -172,7 +172,7 @@ def _desensitize_chat_body(chat_body: dict) -> dict:
             desensitize_harness_user=True,
             desensitize_tools=True,
             compact_harness=not settings.ANTHROPIC_NO_COMPACT,
-            strip_tool_metadata=True,
+            strip_tool_metadata=False,
         )
         _logger.info("harness 脱敏 %d -> %d 字节（compact=%s）",
                      raw_len, len(json.dumps(out, ensure_ascii=False)),
@@ -1657,7 +1657,7 @@ async def _select_account_with_wait(db, **kwargs):
                     timers.append(limit.until)
                 if any(timer and (timer - now).total_seconds() > deadline - time.monotonic() for timer in timers):
                     continue
-                if POOL.inflight.full(row.uid or "", settings.MAX_IN_FLIGHT) or any(timer and timer > now for timer in timers):
+                if POOL.inflight.full(row.uid or "", POOL.limit_for(row)) or any(timer and timer > now for timer in timers):
                     return True
             return False
         if not await _blocking_call(temporarily_busy):
@@ -2505,7 +2505,7 @@ async def chat_completions(
                         tried_accounts += 1
                         # 在途租约：占满上限的号选号阶段已被过滤，
                         # 这里再 acquire 一次以闭合并发窗口（选号与占用之间有间隙）。
-                        if not POOL.acquire(acc_i.uid or ""):
+                        if not POOL.acquire_account(acc_i):
                             continue
                         held_uid = acc_i.uid or ""
                         retry_budget.consume()
@@ -2976,7 +2976,7 @@ async def responses_proxy(
                     if not acc_i:
                         break
                     tried_ids.add(acc_i.id)
-                    if not POOL.acquire(acc_i.uid or ""):
+                    if not POOL.acquire_account(acc_i):
                         continue
                     held_uid = acc_i.uid or ""
                     retry_budget.consume()
@@ -3147,7 +3147,7 @@ async def responses_proxy(
                         if not acc_i:
                             break
                         tried_ids.add(acc_i.id)
-                        if not POOL.acquire(acc_i.uid or ""):
+                        if not POOL.acquire_account(acc_i):
                             continue
                         held_uid = acc_i.uid or ""
                         retry_budget.consume()
@@ -3451,7 +3451,7 @@ async def anthropic_messages(
                     if not acc_i:
                         break
                     tried_ids.add(acc_i.id)
-                    if not POOL.acquire(acc_i.uid or ""):
+                    if not POOL.acquire_account(acc_i):
                         continue
                     held_uid = acc_i.uid or ""
                     retry_budget.consume()
@@ -3624,7 +3624,7 @@ async def anthropic_messages(
                         if not acc_i:
                             break
                         tried_ids.add(acc_i.id)
-                        if not POOL.acquire(acc_i.uid or ""):
+                        if not POOL.acquire_account(acc_i):
                             continue
                         held_uid = acc_i.uid or ""
                         retry_budget.consume()

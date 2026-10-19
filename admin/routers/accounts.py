@@ -480,6 +480,7 @@ def list_accounts(_: bool = Depends(require_admin), db: Session = Depends(get_db
             "enterprise_id": a.enterprise_id,
             "domain": a.domain,
             "status": a.status,
+            "max_in_flight": a.max_in_flight,
             "bound_key_id": owners[a.id].id if owners.get(a.id) else None,
             "bound_key_name": owners[a.id].name if owners.get(a.id) else "",
             "balance_total": a.balance_total,
@@ -1607,6 +1608,14 @@ def patch_account(
     acc = db.query(Account).filter(Account.id == acc_id).first()
     if not acc:
         raise HTTPException(status_code=404, detail="账号不存在")
+    if "max_in_flight" in body:
+        value = body["max_in_flight"]
+        if value is None or value == "":
+            acc.max_in_flight = None
+        elif type(value) is int and 0 <= value <= 2147483647:
+            acc.max_in_flight = value
+        else:
+            raise HTTPException(400, "并发上限必须是非负整数；留空跟随全局，0 表示不限")
     if "name" in body:
         acc.name = body["name"]
     if "status" in body and body["status"] in ("active", "disabled"):

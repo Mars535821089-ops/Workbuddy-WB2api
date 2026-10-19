@@ -36,6 +36,7 @@ class Account(Base):
     last_err_at = Column(DateTime, nullable=True)
     last_err_msg = Column(String(255), default="")
     last_upstream_error = Column(Text, default="")
+    max_in_flight = Column(Integer, nullable=True, default=None)  # null=global, 0=unlimited
     selection_priority = Column(Integer, nullable=True, default=None)
     last_picked_at = Column(DateTime, nullable=True)  # 最近一次被选中（仅观测；防撞号窗口已移入进程内存）
     # 熔断：连续失败达阈值后指数退避，封顶 breaker_cooldown_max。
@@ -228,6 +229,20 @@ class GrowthPlanRecord(Base):
     ok = Column(Integer, default=1)
     credit = Column(Integer, default=0)
     result_json = Column(Text, default="{}")
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class CreditEvent(Base):
+    """Confirmed rewards and observed balance changes are separate ledgers."""
+    __tablename__ = "credit_events"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_key = Column(String(160), nullable=False, unique=True)
+    account_id = Column(Integer, nullable=False, index=True)
+    account_name = Column(String(120), default="")
+    kind = Column(String(24), nullable=False, index=True)
+    source = Column(String(120), default="", index=True)
+    delta = Column(Integer, nullable=False)
+    balance_after = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
