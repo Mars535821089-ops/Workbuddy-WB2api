@@ -1011,7 +1011,7 @@
       <p class="text-xs text-slate-400 mb-3">统计平台全部 Key 的用量：请求数、Token、积分与平均耗时。数据来自本地 usage_logs，随请求实时累计。</p>
 
       <!-- 筛选：按 Key / 模型 / 端点。筛选后所有图与卡片同步变化。 -->
-      <div class="card p-3 mb-4">
+      <div class="card p-3 mb-4 usage-filter-card">
         <div class="flex flex-wrap gap-2 items-end">
           <div class="flex-1 min-w-[150px]">
             <div class="text-[11px] text-slate-400 mb-1">按 Key</div>
@@ -1028,6 +1028,12 @@
           <button onclick="resetUsageFilters()" class="text-sm px-3 py-1.5 rounded-lg border hover:bg-slate-50 whitespace-nowrap">
             <i class="fa-solid fa-filter-circle-xmark mr-1"></i> 清除筛选
           </button>
+        </div>
+        <div class="usage-date-filters">
+          <div class="journal-field"><label for="usageStartButton">开始日期</label><input id="usageStart" type="date" aria-label="使用记录开始日期" data-date-picker /></div>
+          <div class="journal-field"><label for="usageEndButton">结束日期</label><input id="usageEnd" type="date" aria-label="使用记录结束日期" data-date-picker /></div>
+          <button class="console-btn primary" onclick="applyUsageDates()">查询</button>
+          <span class="usage-date-note">按本地日期查询，包含结束当天；留空使用上方时间范围。</span>
         </div>
         <div id="usageFilterHint" class="text-[11px] text-slate-400 mt-2 hidden"></div>
       </div>
@@ -1134,11 +1140,11 @@
         <div class="flex flex-wrap gap-2 items-end mt-2">
           <div class="fld-140">
             <div class="text-[11px] mb-1" style="color:var(--fg-muted)">起始日期</div>
-            <input id="logStart" type="date" class="w-full border rounded-lg px-2 py-2 text-sm" />
+            <input id="logStart" type="date" aria-label="用量日志起始日期" data-date-picker class="w-full border rounded-lg px-2 py-2 text-sm" />
           </div>
           <div class="fld-140">
             <div class="text-[11px] mb-1" style="color:var(--fg-muted)">结束日期</div>
-            <input id="logEnd" type="date" class="w-full border rounded-lg px-2 py-2 text-sm" />
+            <input id="logEnd" type="date" aria-label="用量日志结束日期" data-date-picker class="w-full border rounded-lg px-2 py-2 text-sm" />
           </div>
           <button onclick="loadLogs(1)" class="px-3 py-2 rounded-lg btn-primary text-sm"><i class="fa-solid fa-filter mr-1"></i> 查询</button>
           <button onclick="resetLogFilters()" class="px-3 py-2 rounded-lg border text-sm"><i class="fa-solid fa-filter-circle-xmark mr-1"></i> 清除</button>
@@ -1341,24 +1347,24 @@
     </section>
 
     <section id="panel-journal" class="hidden">
-      <div class="page-head"><div><h1>积分流水</h1><p>确认奖励与余额观察分别记录，不能相加统计。升级前未保存的来源和发放后余额无法补造。</p></div></div>
-      <div class="card p-4">
-        <div class="flex flex-wrap gap-2 mb-3">
-          <select id="journalAccount" aria-label="账号"><option value="">全部账号</option></select>
-          <select id="journalSource" aria-label="来源"><option value="">全部来源</option></select>
-          <select id="journalKind" aria-label="记录类型"><option value="">全部类型</option><option value="confirmed">确认奖励</option><option value="observed">余额观察</option></select>
-          <label>开始 <input id="journalStart" type="datetime-local" /></label>
-          <label>结束 <input id="journalEnd" type="datetime-local" /></label>
-          <button class="console-btn" onclick="WBReview.loadJournal(1)">筛选 / 刷新</button>
+      <div class="page-head"><div><h1>积分流水</h1><p>查看奖励与余额变动，追溯每一笔积分。</p></div></div>
+      <div class="card journal-card">
+        <div class="journal-filters">
+          <div class="journal-field"><span id="journalAccountLabel">账号</span><select id="journalAccount" aria-label="账号"><option value="">全部账号</option></select></div>
+          <div class="journal-field"><span>来源</span><select id="journalSource" aria-label="来源"><option value="">全部来源</option></select></div>
+          <div class="journal-field"><span>记录类型</span><select id="journalKind" aria-label="记录类型"><option value="">全部类型</option><option value="confirmed">确认奖励</option><option value="observed">余额观察</option></select></div>
+          <div class="journal-field"><span>开始时间</span><input id="journalStart" type="datetime-local" aria-label="开始时间" /></div>
+          <div class="journal-field"><span>结束时间</span><input id="journalEnd" type="datetime-local" aria-label="结束时间" /></div>
+          <div class="journal-actions"><button class="console-btn primary" onclick="WBReview.loadJournal(1)">筛选 / 刷新</button><button class="console-btn quiet" onclick="WBReview.resetJournal()">重置</button></div>
         </div>
-        <p id="journalHint" class="hint mb-3"></p>
-        <div class="overflow-x-auto"><table class="tbl" style="min-width:780px"><thead><tr><th>时间</th><th>账号</th><th>类型</th><th>来源</th><th>积分变化</th><th>本次观察余额</th></tr></thead><tbody id="journalBody"></tbody></table></div>
-        <div class="flex gap-2 mt-3"><button id="journalPrev" class="console-btn" onclick="WBReview.journalPage(-1)">上一页</button><span id="journalPage"></span><button id="journalNext" class="console-btn" onclick="WBReview.journalPage(1)">下一页</button></div>
+        <div class="journal-notice">确认奖励与余额观察分别记录，不能相加统计；历史未保存的来源和余额显示为未记录。</div>
+        <div class="overflow-x-auto"><table class="tbl journal-table"><thead><tr><th>时间</th><th>账号</th><th>类型</th><th>来源</th><th class="journal-number">积分变化</th><th class="journal-number">本次观察余额</th></tr></thead><tbody id="journalBody"></tbody></table></div>
+        <div class="journal-footer"><p id="journalHint" role="status"></p><div class="journal-pagination"><button id="journalPrev" class="console-btn" onclick="WBReview.journalPage(-1)">上一页</button><span id="journalPage"></span><button id="journalNext" class="console-btn" onclick="WBReview.journalPage(1)">下一页</button></div></div>
       </div>
     </section>
     <section id="panel-maintenance" class="hidden">
       <div class="page-head"><div><h1>更新与备份</h1><p>检查正式版本、备份数据库，并按部署方式执行升级。</p></div><button class="console-btn" onclick="WBReview.loadUpdate()">检查更新</button></div>
-      <div id="maintenanceInfo" class="card p-4">点击检查更新获取版本信息。</div>
+      <div id="maintenanceInfo" aria-live="polite">点击检查更新获取版本信息。</div>
     </section>
     <!-- 设置面板 -->
     <section id="panel-settings" class="hidden">
@@ -1558,7 +1564,7 @@ function uiSelectToggle(id, ev) {
   el.classList.toggle("open", !wasOpen);
 }
 
-function uiSelectPick(id, value, ev) {
+function uiSelectPick(id, value, ev, notify = true) {
   if (ev) ev.stopPropagation();
   const st = _uiSelectMap.get(id);
   const el = $("#" + id);
@@ -1576,15 +1582,15 @@ function uiSelectPick(id, value, ev) {
     if (!on && old) old.remove();
   });
   el.classList.remove("open");
-  if (st.onChange) st.onChange(value, o);
+  if (notify && st.onChange) st.onChange(value, o);
 }
 
 function uiSelectValue(id) {
   const st = _uiSelectMap.get(id);
   return st ? st.value : "";
 }
-function uiSelectSet(id, value) {
-  uiSelectPick(id, String(value));
+function uiSelectSet(id, value, notify = true) {
+  uiSelectPick(id, String(value), null, notify);
 }
 const $ = (s) => document.querySelector(s);
 const TOKEN_KEY = "wb_admin_token";
@@ -1782,6 +1788,8 @@ function _tabFromUrl() {
 function activateTab(name, opts) {
   if (!TABS.includes(name)) name = TAB_DEFAULT;
   document.documentElement.dataset.activeTab = name;
+  window.WBDateTimePicker?.close();
+  window.WBFilterCombobox?.close();
   // 侧栏导航：active 由 .side-item.active 表达
   document.querySelectorAll(".side-item").forEach(x => {
     x.classList.toggle("active", x.dataset.tab === name);
@@ -3890,10 +3898,10 @@ async function plVerify(){
 function openUpload(){
   openModal(`
     <h3 class="font-bold mb-3"><i class="fa-solid fa-file-import mr-1"></i> 批量上传账号</h3>
-    <p class="text-xs text-slate-500 mb-2">粘贴多个 WorkBuddy 登录态（.info 原文）。支持：①一个 JSON 数组；②每行一个 JSON 对象。也可选择本地 .info 文件。</p>
+    <p class="text-xs text-slate-500 mb-2">粘贴 WorkBuddy 登录态，支持单个 JSON、JSON 数组或每行一个 JSON。也可选择多个凭证文件：新版加密、旧版明文及 .info.bak-时间戳备份均支持，按文件内容验证。</p>
     <p class="text-xs text-amber-600 mb-2"><i class="fa-solid fa-shield-halved mr-1"></i>每条都会调真实上游接口验证是否可用，<b>伪造的凭证会被拒收</b>（因此上传略慢，属正常）。</p>
     <textarea id="upText" class="w-full border rounded-lg p-2 text-xs h-40 font-mono" placeholder='{"auth":{...},"account":{...}}'></textarea>
-    <input id="upFile" type="file" accept=".info,.json" multiple class="upload-file-input" />
+    <input id="upFile" type="file" multiple class="upload-file-input" aria-label="选择账号凭证或备份文件" />
     <div id="upResult" class="upload-result hidden" role="status" aria-live="polite"></div>
     <div class="upload-footer">
       <button id="upSubmit" type="button" onclick="submitUpload()" class="console-btn primary upload-submit"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v12m-4-4 4 4 4-4M4 16v4h16v-4"/></svg><span>确认导入</span></button>
@@ -4097,7 +4105,8 @@ function openReauthAccount(id) {
   openModal(`<h3 class="font-bold mb-2">重新登录 · 账号 #${Number(id)}</h3>
     <p class="text-sm mb-4">验证通过后更新原账号凭证，保留排序、Key 绑定与历史记录。模型日限不会因重登而重置。</p>
     <button class="console-btn mb-3" onclick="openPhoneLogin(${Number(id)})">手机号验证码登录</button>
-    <label class="block text-sm mb-2">上传最新凭证文件 <input id="reauthFile" type="file" accept=".info,.json,.txt" /></label>
+    <label class="block text-sm mb-2">上传凭证或备份文件 <input id="reauthFile" type="file" /></label>
+    <p class="text-xs text-slate-500 mb-2">支持新版加密、旧版明文及 .info.bak-时间戳备份；将验证凭证是否仍可用、是否属于原账号。</p>
     <textarea id="reauthJson" class="w-full border rounded-lg p-2 text-xs h-40 font-mono" placeholder="或粘贴最新账号凭证"></textarea>
     <div class="flex gap-2 mt-3"><button id="reauthSubmit" class="console-btn" onclick="submitReauthAccount(${Number(id)})">验证并更新原账号</button><button class="console-btn quiet" onclick="closeModal()">取消</button></div>`);
   $('#reauthFile').onchange = async e => {
@@ -5644,7 +5653,7 @@ function resetLogFilters() {
   uiSelectSet("logAccountSel", "");
   uiSelectSet("logDaysSel", "1");
   ["logModel", "logKey", "logIp", "logStart", "logEnd", "logResult"].forEach(id => {
-    const el = document.getElementById(id); if (el) el.value = "";
+    const el = document.getElementById(id); if (el) { el.value = ""; el.dispatchEvent(new Event('change', {bubbles:true})); }
   });
   const f = $("#logFastMode"); if (f) f.checked = false;
   _logBeforeId = null;
@@ -5980,6 +5989,7 @@ function trendChart(rows) {
  * Key/模型/端点三个筛选下拉的选项来自「窗口内真实出现过的值」。 */
 let _usageSelReady = false;
 let _usageFilterReady = false;
+let _usageLoadGeneration = 0;
 // 筛选下拉的选项缓存。声明必须在使用它的 _usageQuery / loadUsageFilterOptions
 // **之前**：虽是顶层 let（会被提升到 TDZ），但函数可能在任何位置被调用，
 // 声明靠后容易踩「Cannot access before initialization」。放前面最省心。
@@ -6000,8 +6010,14 @@ function initUsageSelects() {
       { value: "14", label: "近 14 天" },
       { value: "30", label: "近 30 天" },
       { value: "90", label: "近 90 天" },
+      { value: "custom", label: "自定义日期" },
     ],
-    onChange: () => { loadUsageFilterOptions(); loadUsageStats(); },
+    onChange: async value => {
+      if (value === "custom") return;
+      for (const id of ["usageStart", "usageEnd"]) { $("#" + id).value = ""; window.WBDateTimePicker?.sync(id); }
+      _usageFilterReady = false;
+      await loadUsageFilterOptions(); loadUsageStats();
+    },
   });
   const gBox = $("#usageGrainSel");
   if (gBox) gBox.outerHTML = uiSelectHTML("usageGrainSel", {
@@ -6012,19 +6028,48 @@ function initUsageSelects() {
     ],
     onChange: () => loadUsageStats(),
   });
+  for (const id of ["usageStart", "usageEnd"]) {
+    $("#" + id).addEventListener("change", () => {
+      _usageFilterReady = false;
+      if ($("#usageStart").value || $("#usageEnd").value) uiSelectSet("usageDaysSel", "custom");
+      else uiSelectSet("usageDaysSel", "1");
+    });
+  }
+}
+
+function _usageDatesValid() {
+  const start = $("#usageStart").value, end = $("#usageEnd").value;
+  return !start || !end || start <= end;
+}
+function _usageTimeParams() {
+  const start = $("#usageStart").value, end = $("#usageEnd").value;
+  const params = new URLSearchParams();
+  if (start || end) {
+    if (start) params.set("start", new Date(start + "T00:00:00").toISOString());
+    if (end) params.set("end", new Date(end + "T23:59:59.999").toISOString());
+  } else params.set("days", String(Number(uiSelectValue("usageDaysSel")) || 1));
+  return params;
+}
+async function applyUsageDates() {
+  if (!_usageDatesValid()) return toast("开始日期不能晚于结束日期", "err");
+  _usageFilterReady = false;
+  await loadUsageFilterOptions();
+  await loadUsageStats();
 }
 
 // 渲染 Key/模型/端点筛选下拉。
 // 选项只列窗口内真实出现过的值 —— 否则下拉里塞满从没用过的模型，
 // 选中后筛出空结果，用户会以为"功能坏了"。
 async function loadUsageFilterOptions() {
-  const days = uiSelectValue("usageDaysSel") || 1;
+  if (!_usageDatesValid()) return;
+  const windowQuery = _usageTimeParams().toString();
   let opts = { models: [], use_cases: [], keys: [] };
   try {
-    const r = await api(`/api/stats/usage/options?days=${days}`);
+    const r = await api('/api/stats/usage/options?' + windowQuery);
     const { ok, data } = await safeJson(r);
     if (ok) opts = data || opts;
   } catch (e) { /* 选项拉取失败不阻塞统计展示 */ }
+  if (windowQuery !== _usageTimeParams().toString()) return;
   _usageOpts = opts;
 
   // 保留当前选择；但若该值本次不在选项里（换了时间窗后消失），
@@ -6070,26 +6115,31 @@ async function loadUsageFilterOptions() {
 function resetUsageFilters() {
   // 必须走 uiSelectSet：下拉的真实状态在 _uiSelectMap 里，
   // 直接改 DOM 的 dataset 只会让标签变了、筛选值还在。
-  uiSelectSet("usageKeySel", "");
-  uiSelectSet("usageModelSel", "");
-  uiSelectSet("usageCaseSel", "");
+  uiSelectSet("usageKeySel", "", false);
+  uiSelectSet("usageModelSel", "", false);
+  uiSelectSet("usageCaseSel", "", false);
+  uiSelectSet("usageDaysSel", "1", false);
+  for (const id of ["usageStart", "usageEnd"]) { $("#" + id).value = ""; window.WBDateTimePicker?.sync(id); }
+  _usageFilterReady = false;
   loadUsageStats();
 }
 
 /* 当前筛选条件 -> query string，并生成一句人话提示 */
 function _usageQuery() {
-  const days = uiSelectValue("usageDaysSel") || 1;
   const grain = uiSelectValue("usageGrainSel") || "hour";
   const key = uiSelectValue("usageKeySel") || "";
   const model = uiSelectValue("usageModelSel") || "";
   const cs = uiSelectValue("usageCaseSel") || "";
-  const qs = new URLSearchParams({ days, granularity: grain });
+  const qs = _usageTimeParams();
+  qs.set("granularity", grain);
   if (key) qs.set("key_id", key);
   if (model) qs.set("model", model);
   if (cs) qs.set("use_case", cs);
 
   const keyName = ((_usageOpts.keys || []).find(k => String(k.id) === key) || {}).name || key;
   const conds = [];
+  const start = $("#usageStart").value, end = $("#usageEnd").value;
+  if (start || end) conds.push("日期=" + (start || "…") + " ~ " + (end || "…"));
   if (key) conds.push(`Key=${keyName}`);
   if (model) conds.push(`模型=${model}`);
   if (cs) conds.push(`端点=${cs}`);
@@ -6108,7 +6158,10 @@ function _usageEmpty(conds) {
 
 async function loadUsageStats() {
   initUsageSelects();
+  const generation = ++_usageLoadGeneration;
+  if (!_usageDatesValid()) return toast("开始日期不能晚于结束日期", "err");
   if (!_usageFilterReady) await loadUsageFilterOptions();
+  if (generation !== _usageLoadGeneration) return;
 
   const { qs, conds } = _usageQuery();
   const ov = $("#usageOverview");
@@ -6125,6 +6178,7 @@ async function loadUsageStats() {
   try {
     const r = await api(`/api/stats/usage?${qs}`);
     const { ok, data: d } = await safeJson(r);
+    if (generation !== _usageLoadGeneration) return;
     if (!ok) { if (ov) ov.innerHTML = `<div class="col-span-4 text-sm text-red-500">加载失败: ${esc(d.detail || "")}</div>`; return; }
 
     const o = d.overview || {};
@@ -6150,6 +6204,7 @@ async function loadUsageStats() {
     $("#usageEndpointChart").innerHTML = donutChart(d.by_endpoint, "credits");
     $("#usageTrendChart").innerHTML = trendChart(d.trend);
   } catch (e) {
+    if (generation !== _usageLoadGeneration) return;
     if (ov) ov.innerHTML = `<div class="col-span-4 text-sm text-red-500">加载异常: ${esc(e.message)}</div>`;
   }
 }
@@ -6231,6 +6286,7 @@ if (TOKEN && !new URLSearchParams(location.search).has("desktop")) {
 </script>
 <script src="/static/growth_center.js"></script>
 <script src="/static/benefits.js"></script>
+<script src="/static/date-time-picker.js"></script>
 <script src="/static/review-improvements.js"></script>
 <script src="/static/vendor/marked-12.0.2.min.js"></script>
 <script src="/static/vendor/dompurify-3.4.17.min.js"></script>

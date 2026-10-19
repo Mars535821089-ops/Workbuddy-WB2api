@@ -49,7 +49,10 @@ def mobile_html(html: str) -> str:
     html = re.sub(r'^.*if \(name === "(?:client|settings)"\).*\n', '', html, flags=re.M)
     html = re.sub(r'<button\b[^>]*data-tab="settings".*?</button>', '', html, flags=re.S)
     html = html.replace('登录新账号，或从本机与备份中恢复已有账号。', '手机号登录或浏览器授权，账号保存在这台手机。')
-    html = html.replace('也可选择本地 .info 文件。', '也可选择本地 .info 文件。新版 Windows 加密凭证请先在电脑账号管理页导出“系统明文备份”后再导入，或使用手机号授权登录。')
+    html = html.replace('新版加密、旧版明文及 .info.bak-时间戳备份', '旧版明文及 .info.bak-时间戳备份')
+    credential_note = '<p class="text-xs text-slate-500 mb-2">新版 Windows 加密凭证请先在电脑账号管理页导出“系统明文备份”后再导入，或使用手机号授权登录。</p>'
+    for marker in ('<input id="upFile"', '<textarea id="reauthJson"'):
+        html = html.replace(marker, credential_note + marker)
     html = html.replace('<link rel="stylesheet" href="/static/desktop.css" />',
                         '<link rel="stylesheet" href="/static/desktop.css" /><link rel="stylesheet" href="/static/mobile.css" />')
     html = html.replace('</body>', '<script src="/static/mobile.js"></script><script src="/static/mobile_settings.js"></script>\n</body>')

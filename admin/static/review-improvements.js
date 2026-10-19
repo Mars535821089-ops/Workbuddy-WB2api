@@ -1,6 +1,7 @@
 /* Authenticated maintenance and provenance-aware credit history. */
 window.WBReview = (() => {
-  let page = 1, generation = 0;
+  let page = 1, generation = 0, updateGeneration = 0;
+  let installMethod = 'docker';
   async function json(path, options) {
     const result = await safeJson(await api(path, options));
     if (!result.ok) throw new Error(typeof result.data.detail === 'string' ? result.data.detail : 'HTTP ' + result.status);
@@ -9,38 +10,125 @@ window.WBReview = (() => {
   function options(id, rows, label) {
     const select = document.getElementById(id), selected = select.value;
     select.innerHTML = '<option value="">' + label + '</option>' + rows.map(([value, text]) => '<option value="' + esc(String(value)) + '">' + esc(String(text)) + '</option>').join('');
-    select.value = selected;
+    select.value = rows.some(([value]) => String(value) === selected) ? selected : '';
+    WBFilterCombobox.attachSelect(id);
+  }
+  function sourceLabel(source) {
+    return String(source).replace(/^(schedule|manual|task) · /, (_, prefix) => ({schedule:'定时',manual:'手动',task:'任务'}[prefix]) + ' · ');
+  }
+  function initJournal() {
+    for (const id of ['journalAccount','journalSource','journalKind']) WBFilterCombobox.attachSelect(id);
+    WBDateTimePicker.attach('journalStart');
+    WBDateTimePicker.attach('journalEnd', true);
+  }
+  function resetJournal() {
+    for (const id of ['journalAccount','journalSource','journalKind','journalStart','journalEnd']) {
+      const input = document.getElementById(id);
+      input.value = ''; input.dispatchEvent(new Event('change', {bubbles:true}));
+    }
+    loadJournal(1);
+  }
+  function journalRow(row) {
+    const delta = Number(row.delta);
+    const sign = delta > 0 ? 'positive' : delta < 0 ? 'negative' : 'neutral';
+    const confirmed = row.kind === 'confirmed';
+    return '<tr><td>' + esc(new Date(row.created_at).toLocaleString()) + '</td><td>' +
+      esc(row.account_name || '#' + row.account_id) + '<small class="journal-account-id">#' + Number(row.account_id) +
+      '</small></td><td><span class="journal-kind ' + (confirmed ? 'confirmed' : '') + '">' +
+      (confirmed ? '确认奖励' : '余额观察') + '</span></td><td>' + esc(sourceLabel(row.source)) +
+      '</td><td class="journal-number journal-delta ' + sign + '">' + (delta > 0 ? '+' : '') +
+      delta.toLocaleString() + '</td><td class="journal-number' + (row.balance_after == null ? ' journal-unrecorded' : '') +
+      '">' + (row.balance_after == null ? '未记录' : Number(row.balance_after).toLocaleString()) + '</td></tr>';
   }
   async function loadJournal(next = 1) {
+    initJournal();
+    WBFilterCombobox.close();
+    WBDateTimePicker.close();
     const mine = ++generation;
     const query = new URLSearchParams({page: next, page_size: 50});
     for (const [id, name] of [['journalAccount','account_id'],['journalSource','source'],['journalKind','kind']]) {
       const value = document.getElementById(id).value; if (value) query.set(name, value);
     }
-    for (const [id, name] of [['journalStart','start'],['journalEnd','end']]) {
-      const value = document.getElementById(id).value; if (value) query.set(name, new Date(value).toISOString());
+    const start = document.getElementById('journalStart').value, end = document.getElementById('journalEnd').value;
+    if (start && end && start > end) {
+      document.getElementById('journalHint').textContent = '开始时间不能晚于结束时间，请调整后重新筛选。';
+      return;
     }
+    if (start) query.set('start', new Date(start).toISOString());
+    if (end) query.set('end', new Date(end).toISOString());
     document.getElementById('journalHint').textContent = '正在读取积分流水…';
     try {
       const data = await json('/api/maintenance/credit-events?' + query);
       if (mine !== generation) return;
       page = data.page;
-      options('journalAccount', data.accounts.map(a => [a.id, a.name || '#' + a.id]), '全部账号');
-      options('journalSource', data.sources.map(s => [s,s]), '全部来源');
-      document.getElementById('journalBody').innerHTML = data.items.map(row => '<tr><td>' + esc(new Date(row.created_at).toLocaleString()) + '</td><td>' + esc(row.account_name || '#' + row.account_id) + ' <small>#' + row.account_id + '</small></td><td>' + (row.kind === 'confirmed' ? '确认奖励' : '余额观察') + '</td><td>' + esc(row.source) + '</td><td>' + (row.delta > 0 ? '+' : '') + Number(row.delta) + '</td><td>' + (row.balance_after == null ? '未记录' : Number(row.balance_after)) + '</td></tr>').join('') || '<tr><td colspan="6">没有符合条件的记录</td></tr>';
-      document.getElementById('journalHint').textContent = '共 ' + data.total + ' 条。余额观察的来源未确认，可能包含消费、奖励、到期或对账修正。' + (data.importing ? '历史记录分批导入中，请刷新继续。' : '');
+      options('journalAccount', data.accounts.map(a => [a.id, (a.name || '账号') + ' · #' + a.id]), '全部账号');
+      options('journalSource', data.sources.map(s => [s,sourceLabel(s)]), '全部来源');
+      document.getElementById('journalBody').innerHTML = data.items.map(journalRow).join('') || '<tr><td colspan="6" class="journal-empty">没有符合条件的记录，试试调整筛选条件。</td></tr>';
+      document.getElementById('journalHint').textContent = '共 ' + data.total + ' 条记录' + (data.importing ? ' · 历史记录导入中，请刷新继续' : '') + '。余额观察可能包含消费、奖励、到期或对账修正。';
       document.getElementById('journalPage').textContent = '第 ' + page + ' / ' + Math.max(1,Math.ceil(data.total / data.page_size)) + ' 页';
       document.getElementById('journalPrev').disabled = page <= 1;
       document.getElementById('journalNext').disabled = page * data.page_size >= data.total;
     } catch (error) { if (mine === generation) document.getElementById('journalHint').textContent = error.message; }
   }
+  function highlightCommand(command) {
+    // Tokenize raw text, then escape each token. Highlighting never inserts raw HTML.
+    const pattern = /("(?:\\.|[^"\\])*"|'[^']*'|#[^\n]*|<[^>\n]+>|--?[\w][\w=-]*|\b(?:git|docker|python|mysqldump)\b|[>|])/g;
+    let output = '', cursor = 0;
+    for (const match of String(command).matchAll(pattern)) {
+      const token = match[0];
+      const kind = token[0] === '#' ? 'comment' : /^--?/.test(token) ? 'option' :
+        /^["'<]/.test(token) ? 'string' : /^[>|]$/.test(token) ? 'operator' : 'command';
+      output += esc(command.slice(cursor, match.index)) + '<span class="cmd-token-' + kind + '">' + esc(token) + '</span>';
+      cursor = match.index + token.length;
+    }
+    return output + esc(command.slice(cursor));
+  }
+  function commandBlock(id, command) {
+    return '<div class="maintenance-code"><div class="maintenance-code-head"><span>终端 · Bash</span>' +
+      '<button type="button" class="console-btn quiet" onclick="copyText(\'#' + id + '\')" aria-label="复制命令">' +
+      '<i class="fa-regular fa-copy" aria-hidden="true"></i>复制命令</button></div><pre><code id="' + id + '">' +
+      highlightCommand(command) + '</code></pre></div>';
+  }
+  function selectInstall(method) {
+    if (!['docker','linux'].includes(method)) return;
+    installMethod = method;
+    document.querySelectorAll('[data-install-method]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.installMethod === method)));
+    document.querySelectorAll('[data-install-panel]').forEach(panel => { panel.hidden = panel.dataset.installPanel !== method; });
+  }
   async function loadUpdate() {
+    const mine = ++updateGeneration;
     const panel = document.getElementById('maintenanceInfo');
     panel.textContent = '正在检查正式版本…';
     try {
       const data = await json('/api/maintenance/update');
-      panel.innerHTML = '<h3>当前版本 ' + esc(data.version) + ' · ' + (data.latest ? '最新正式版 ' + esc(data.latest.tag) : '未获取到正式版本') + '</h3><p class="my-3">' + esc(data.error || (data.available ? '有新版本可升级' : '未发现更高版本')) + '</p><p>' + esc(data.backup_note) + '</p><div class="flex gap-2 my-3"><button class="console-btn" onclick="WBReview.backup()" ' + (data.backup_supported ? '' : 'disabled') + '>下载 SQLite 数据库备份</button><a href="' + esc(data.releases_url) + '" target="_blank" rel="noopener noreferrer">查看正式版本与公告</a></div>' + (data.mysql_backup_command ? '<p>当前使用 ' + esc(data.database) + '，请先使用数据库管理工具备份。</p><pre class="overflow-x-auto p-3">' + esc(data.mysql_backup_command) + '</pre>' : '') + (data.commands ? Object.entries(data.commands).map(([name, command]) => '<details class="my-3"><summary>' + (name === 'docker' ? 'Docker Compose 升级命令' : 'Linux 源码升级命令') + '</summary><pre class="overflow-x-auto p-3">' + esc(command) + '</pre></details>').join('') : '');
-    } catch (error) { panel.textContent = error.message; }
+      if (mine !== updateGeneration) return;
+      const status = data.error || !data.latest ? '版本检查未完成' : data.available ? '有新版本可升级' : '暂无新版本';
+      const warning = !!data.error || !data.latest;
+      panel.innerHTML = '<section class="card maintenance-version"><div class="maintenance-version-head"><div><span class="maintenance-eyebrow">软件版本</span><h2>保持更新，安心使用</h2></div><span class="maintenance-status ' +
+        (warning ? 'warning' : data.available ? 'available' : '') + '"><i class="fa-solid ' +
+        (warning ? 'fa-circle-exclamation' : data.available ? 'fa-arrow-up' : 'fa-check') + '" aria-hidden="true"></i>' + status +
+        '</span></div><div class="maintenance-version-values"><div><span>当前版本</span><strong>' + esc(data.version) +
+        '</strong></div><div><span>最新正式版</span><strong>' + esc(data.latest?.tag || '暂未获取') +
+        '</strong></div><a class="console-btn" href="' + esc(data.releases_url) +
+        '" target="_blank" rel="noopener noreferrer">版本与更新公告<i class="fa-solid fa-arrow-up-right-from-square" aria-hidden="true"></i></a></div>' +
+        (data.error ? '<p class="maintenance-error">' + esc(data.error) + '</p>' : '') + '</section>' +
+        '<section class="card maintenance-step"><div class="maintenance-step-head"><span class="maintenance-step-number">01</span><div><h2>备份数据</h2><p>升级前先保存一份数据库备份，便于恢复账号与配置。</p></div><span class="maintenance-db">' +
+        esc(String(data.database || (data.backup_supported ? 'sqlite' : '数据库')).toUpperCase()) + '</span></div>' +
+        (data.backup_supported ? '<button class="console-btn primary" onclick="WBReview.backup()"><i class="fa-solid fa-download" aria-hidden="true"></i>下载 SQLite 备份</button>' :
+          '<p class="maintenance-backup-help">当前数据库请使用管理工具完成备份' + (data.mysql_backup_command ? '，也可以在终端使用以下命令。' : '。') + '</p>') +
+        (data.mysql_backup_command ? commandBlock('maintenance-command-backup', data.mysql_backup_command) : '') +
+        '<p class="maintenance-private-note"><i class="fa-solid fa-lock" aria-hidden="true"></i>备份包含账号凭据和 API Key，请私密保存。</p></section>' +
+        '<section class="card maintenance-step"><div class="maintenance-step-head"><span class="maintenance-step-number">02</span><div><h2>升级与重启</h2><p>选择当前的部署方式，在项目目录执行对应命令。</p></div></div>' +
+        (data.commands ? '<div class="maintenance-tabs" role="group" aria-label="部署方式">' +
+          ['docker','linux'].filter(name => data.commands[name]).map(name => '<button type="button" data-install-method="' + name +
+            '" aria-pressed="false" onclick="WBReview.selectInstall(\'' + name + '\')">' + (name === 'docker' ? 'Docker Compose' : 'Linux 源码') +
+            '</button>').join('') + '</div>' +
+          ['docker','linux'].filter(name => data.commands[name]).map(name => '<div data-install-panel="' + name + '">' +
+            commandBlock('maintenance-command-' + name, data.commands[name]) + '</div>').join('') :
+          '<p class="maintenance-backup-help">获取正式版本后显示对应的升级命令，请稍后重新检查。</p>') +
+        '<p class="maintenance-deploy-note">先确认 <code>git status</code> 没有未处理的本地改动。NAS 可在容器管理器重新构建并重启，保留 <code>/data</code> 数据卷。</p></section>';
+      selectInstall(data.commands?.[installMethod] ? installMethod : data.commands?.docker ? 'docker' : 'linux');
+    } catch (error) { if (mine === updateGeneration) panel.textContent = error.message; }
   }
   async function backup() {
     try {
@@ -61,7 +149,7 @@ window.WBReview = (() => {
     if (value !== null && (!Number.isInteger(value) || value < 0 || value > 2147483647)) return toast('请输入非负整数或留空','err');
     try { await json('/api/accounts/' + id, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({max_in_flight:value})}); closeModal(); loadAccounts(); } catch (error) { toast(error.message,'err'); }
   }
-  return {loadJournal, journalPage:delta => loadJournal(Math.max(1,page+delta)), loadUpdate, backup, accountLimit, saveLimit};
+  return {loadJournal, resetJournal, journalPage:delta => loadJournal(Math.max(1,page+delta)), loadUpdate, selectInstall, backup, accountLimit, saveLimit};
 })();
 document.addEventListener('DOMContentLoaded', () => {
   if (document.documentElement.dataset.activeTab === 'journal') WBReview.loadJournal(1);
