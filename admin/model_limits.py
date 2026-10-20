@@ -12,6 +12,12 @@ DAILY_CODES = frozenset({"6004", "6008"})
 QUEUE_CODES = frozenset({"6020", "6021", "6022"})
 
 
+def next_cn_midnight(now: datetime) -> datetime:
+    """6008: current official client says the request quota resets at midnight."""
+    local = now.replace(tzinfo=timezone.utc).astimezone(CN_TIME)
+    return (local.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)).astimezone(timezone.utc).replace(tzinfo=None)
+
+
 def queue_retry_time(body: str, now: datetime | None = None) -> datetime | None:
     """Match the client's queue retry_after seconds/milliseconds normalization."""
     now = now or datetime.utcnow()

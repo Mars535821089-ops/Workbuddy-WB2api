@@ -30,3 +30,19 @@ atexit.register(_cleanup)
 def assert_test_database(engine):
     if engine.dialect.name != 'sqlite' or Path(engine.url.database).resolve() != DATABASE_PATH:
         raise RuntimeError('Refusing test database writes: engine is not the isolated temporary SQLite database')
+
+
+async def collect_response(response, on_chunk=None):
+    """Execute the ASGI response, including deferred stream preflight/cleanup."""
+    import asyncio
+    chunks = []
+    async def receive():
+        await asyncio.Event().wait()
+    async def send(message):
+        if message['type'] == 'http.response.body' and message.get('body'):
+            chunks.append(message['body'])
+            if on_chunk is not None:
+                on_chunk(message['body'])
+    await response({'type': 'http', 'method': 'POST', 'path': '/',
+                    'asgi': {'spec_version': '2.3'}}, receive, send)
+    return b''.join(chunks)

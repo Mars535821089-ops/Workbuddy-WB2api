@@ -278,6 +278,7 @@ def run_accounts(account_ids: list[int], task_codes: list[str] | None,
         acc = db.get(Account, aid)
         acc_log = {"account_id": aid, "name": acc.name if acc else "",
                    "model": model, "ok": True, "tasks": []}
+        reward_records = []
         def report(item):
             acc_log["tasks"].append(item)
             if on_task:
@@ -430,6 +431,9 @@ def run_accounts(account_ids: list[int], task_codes: list[str] | None,
                         try:
                             r = s.growth_claim(code)
                             d = r.get("data") or {}
+                            if r.get("ok") and not d.get("already_claimed") and int(d.get("credit") or 0) > 0:
+                                from admin.growth_center import record_result
+                                reward_records.append(record_result(db, acc.id, {"ok": True, "credit": int(d["credit"])}, source="task", action="任务奖励 " + str(code)[:30]))
                             claimed.append({"task_code": code, "ok": bool(r.get("ok")),
                                             "credit": d.get("credit") or 0, "energy": d.get("energy") or 0})
                         except Exception as e:
@@ -449,8 +453,12 @@ def run_accounts(account_ids: list[int], task_codes: list[str] | None,
                         bal = s.fetch_balance()
                         acc.balance_total = int(bal.get("total") or 0)
                         acc.balance_remain = int(bal.get("remain") or 0)
+                        from admin.credit_journal import attach_balance
+                        attach_balance(db, reward_records, acc.balance_remain)
                         acc.last_sync_at = datetime.utcnow()
                         acc_log.update(balance_total=acc.balance_total, balance_remain=acc.balance_remain)
+                        from admin.routers.accounts import _sync_credit_snapshot
+                        _sync_credit_snapshot(acc, s.fetch_credit_details())
                     except Exception as e:
                         acc_log["balance_error"] = str(e)[:120]
                     acc.auth_json = _updated(s, acc)
@@ -481,6 +489,7 @@ def claim_accounts(account_ids: list[int], task_codes: list[str] | None,
 
         acc_log = {"account_id": aid, "name": acc.name, "ok": True,
                    "claimed": [], "total_credit": 0, "total_energy": 0}
+        reward_records = []
         try:
             with backend.AccountSession(acc.auth_json) as s:
                 if task_codes:
@@ -496,6 +505,9 @@ def claim_accounts(account_ids: list[int], task_codes: list[str] | None,
                         d = r.get("data") or {}
                         credit = d.get("credit") or 0
                         energy = d.get("energy") or 0
+                        if r.get("ok") and not d.get("already_claimed") and int(credit) > 0:
+                            from admin.growth_center import record_result
+                            reward_records.append(record_result(db, acc.id, {"ok": True, "credit": int(credit)}, source="task", action="任务奖励 " + str(code)[:30]))
                         acc_log["claimed"].append({
                             "task_code": code,
                             "ok": bool(r.get("ok")),
@@ -523,9 +535,13 @@ def claim_accounts(account_ids: list[int], task_codes: list[str] | None,
                     bal = s.fetch_balance()
                     acc.balance_total = int(bal.get("total", 0) or 0)
                     acc.balance_remain = int(bal.get("remain", 0) or 0)
+                    from admin.credit_journal import attach_balance
+                    attach_balance(db, reward_records, acc.balance_remain)
                     acc_log["balance_total"] = acc.balance_total
                     acc_log["balance_remain"] = acc.balance_remain
                     acc.last_sync_at = datetime.utcnow()
+                    from admin.routers.accounts import _sync_credit_snapshot
+                    _sync_credit_snapshot(acc, s.fetch_credit_details())
                 except Exception as e:
                     acc_log["balance_error"] = str(e)[:120]
         except Exception as e:

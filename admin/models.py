@@ -35,6 +35,9 @@ class Account(Base):
     cool_kind = Column(String(16), default="")       # hard_credit | soft_rate | error_threshold | not_found
     last_err_at = Column(DateTime, nullable=True)
     last_err_msg = Column(String(255), default="")
+    last_upstream_error = Column(Text, default="")
+    max_in_flight = Column(Integer, nullable=True, default=None)  # null=global, 0=unlimited
+    selection_priority = Column(Integer, nullable=True, default=None)
     last_picked_at = Column(DateTime, nullable=True)  # 最近一次被选中（仅观测；防撞号窗口已移入进程内存）
     # 熔断：连续失败达阈值后指数退避，封顶 breaker_cooldown_max。
     # 与 cool_until 是**或门**关系（任一未到期即不可选），生效的是更晚的那个。
@@ -43,7 +46,7 @@ class Account(Base):
     # 连续 12153「session dead」计数：达到阈值才禁用。
     # 一次就禁用等于误杀 —— 该错误在真实环境会被临时性触发（上游抖动/并发刷新）。
     session_dead_fails = Column(Integer, default=0)
-    # 连败降权（「不知道原因的失败」兜底：未知 4xx 与传输层抖动）：
+    # 连败降权（传输层抖动与上游内部故障）：
     # 带权威分类的错误各有自己的惩罚，不喂这个计数器，避免重复计罚。
     consecutive_fails = Column(Integer, default=0)
     degrade_until = Column(DateTime, nullable=True)
@@ -94,6 +97,8 @@ class AccountModelCooldown(Base):
     until = Column(DateTime, nullable=True)          # 冷却截止
     kind = Column(String(24), default="")            # model_daily | model_rate | model_queue | model_block
     reason = Column(String(255), default="")
+    upstream_error = Column(Text, default="")
+    reset_source = Column(String(24), default="")
     hits = Column(Integer, default=0)                # 命中次数（model_block 指数退避用）
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -111,10 +116,12 @@ class ApiKey(Base):
     key_full = Column(String(2048), default="")  # 完整密钥（仅管理后台查看用，base64 编码存储）
     credit_limit = Column(Float, default=0)  # 限额（credits）；unlimited=True 时忽略
     credit_used = Column(Float, default=0)
-    unlimited = Column(Integer, default=0)  # 0/1
+    unlimited = Column(Integer, default=1)  # New keys default to unlimited; existing limits are preserved.
     # 该 Key 并发上限：NULL=跟随全局 ADMIN_GATEWAY_MAX_CONCURRENT；0=不限；N=最多 N 路在途
     # 注意：这是准入层限制，与账号层 ADMIN_POOL_MAX_IN_FLIGHT（防单号雪崩）相互独立。
     max_concurrent = Column(Integer, nullable=True, default=None)
+    # NULL = global requests/minute; 0 = unlimited (independent of concurrency).
+    rate_per_minute = Column(Integer, nullable=True, default=None)
     status = Column(String(16), default="active")  # active | revoked
     note = Column(String(255), default="")
     # 绑定的模型分组 id；0 = 未绑定（可用全部启用模型）。分组被删时按 0 处理（自动降级）
@@ -194,7 +201,34 @@ class UsageLog(Base):
     ttfb_ms = Column(Integer, nullable=True, default=None)
     latency_ms = Column(Integer, nullable=True, default=None)
     error_kind = Column(String(32), default="")  # hard_credit | soft_rate | server | not_found | session_dead | transport | client | success
+    diagnostic_json = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class RequestAudit(Base):
+    """Request outcomes, including admission rejections and client disconnects.
+
+    Kept separate from billable usage: these rows never debit credits or imply
+    that an upstream model was called. No request content or credentials.
+    """
+    __tablename__ = "request_audits"
+    __table_args__ = (
+        Index("ix_request_audit_key_started", "api_key_id", "started_at"),
+        Index("ix_request_audit_started", "started_at"),
+    )
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    request_id = Column(String(32), nullable=False)
+    api_key_id = Column(Integer, nullable=False)
+    path = Column(String(80), nullable=False)
+    model = Column(String(120), default="")
+    started_at = Column(DateTime, nullable=False)
+    finished_at = Column(DateTime, nullable=False)
+    status = Column(Integer, nullable=True)
+    outcome = Column(String(32), nullable=False)
+    reason = Column(String(64), default="")
+    phase = Column(String(80), default="")
+    elapsed_ms = Column(Integer, nullable=False)
+    upstream_attempts = Column(Integer, default=0)
 
 
 class ModelConfig(Base):
@@ -223,6 +257,20 @@ class GrowthPlanRecord(Base):
     ok = Column(Integer, default=1)
     credit = Column(Integer, default=0)
     result_json = Column(Text, default="{}")
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class CreditEvent(Base):
+    """Confirmed rewards and observed balance changes are separate ledgers."""
+    __tablename__ = "credit_events"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_key = Column(String(160), nullable=False, unique=True)
+    account_id = Column(Integer, nullable=False, index=True)
+    account_name = Column(String(120), default="")
+    kind = Column(String(24), nullable=False, index=True)
+    source = Column(String(120), default="", index=True)
+    delta = Column(Integer, nullable=False)
+    balance_after = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 

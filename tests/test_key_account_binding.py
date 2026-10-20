@@ -245,7 +245,8 @@ class ProtocolTests(Fixture, unittest.IsolatedAsyncioTestCase):
                             with patch.object(proxy, "_account_session_async",session), patch.object(proxy.httpx,"AsyncClient",client), patch.object(proxy.pool,"rotate_backoff_async",backoff):
                                 with self.factory() as db:
                                     result = await handler(request, db=db, x_api_key=token, authorization=None)
-                                    output = ''.join([x.decode() if isinstance(x,bytes) else x async for x in result.body_iterator]) if hasattr(result,"body_iterator") else result.body.decode()
+                                    from tests import collect_response
+                                    output = (await collect_response(result)).decode()
                             self.assertEqual(calls,[expected])
                             if not failure: self.assertIn("hello",output)
                             self.assertFalse(proxy.POOL.inflight.snapshot())

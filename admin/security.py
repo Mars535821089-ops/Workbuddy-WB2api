@@ -28,6 +28,9 @@ def verify_admin_token(token: str | None):
         raise HTTPException(status_code=401, detail="未登录")
     try:
         payload = jwt.decode(token, settings.JWT_SECRET, algorithms=["HS256"])
+        local_runtime = os.getenv("WORKBUDDY_DESKTOP") == "1" or os.getenv("WORKBUDDY_ANDROID") == "1"
+        if "exp" not in payload and not (local_runtime and payload.get("local_shell") is True):
+            raise HTTPException(status_code=401, detail="无效令牌")
         if payload.get("sub") != settings.ADMIN_USERNAME:
             raise HTTPException(status_code=401, detail="无效令牌")
     except jwt.PyJWTError:
@@ -86,5 +89,5 @@ def check_quota(key: ApiKey) -> None:
     if not key.unlimited and key.credit_used >= key.credit_limit:
         raise HTTPException(
             status_code=402,
-            detail={"error": {"message": "积分已耗尽", "type": "quota_exceeded"}},
+            detail={"error": {"message": "当前 API Key 的额度已用完，请调整此 Key 的限额或联系管理员", "type": "quota_exceeded", "code": "key_quota_exceeded", "source": "gateway"}},
         )

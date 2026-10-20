@@ -4,6 +4,7 @@ import asyncio
 import anyio
 import logging
 import math
+import random
 import uuid
 import threading
 import time
@@ -13,6 +14,7 @@ from admin.config import settings
 _lock = threading.Lock()
 _windows = {}
 _active = {}
+_waiters = {}
 _redis = None
 _redis_initialized = False
 _redis_lock = threading.Lock()
@@ -24,14 +26,16 @@ redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now-60)
 redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', now)
 if tonumber(ARGV[1]) > 0 and redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[1]) then
  local first = redis.call('ZRANGE', KEYS[1], 0, 0, 'WITHSCORES')
- return math.max(1, math.ceil(60-now+tonumber(first[2])))
+ return {math.max(1, math.ceil(60-now+tonumber(first[2]))), 1, redis.call('ZCARD', KEYS[1])}
 end
-if tonumber(ARGV[2]) > 0 and redis.call('ZCARD', KEYS[2]) >= tonumber(ARGV[2]) then return 1 end
+if tonumber(ARGV[2]) > 0 and redis.call('ZCARD', KEYS[2]) >= tonumber(ARGV[2]) then
+ return {1, 2, redis.call('ZCARD', KEYS[2])}
+end
 if tonumber(ARGV[1]) > 0 then
  redis.call('ZADD', KEYS[1], now, ARGV[3]); redis.call('EXPIRE', KEYS[1], 61)
 end
 redis.call('ZADD', KEYS[2], now+120, ARGV[3]); redis.call('EXPIRE', KEYS[2], 121)
-return 0
+return {0, 0, 0}
 """
 _RENEW = """
 if not redis.call('ZSCORE', KEYS[1], ARGV[1]) then return 0 end
@@ -76,6 +80,16 @@ class Admission:
         self.token = uuid.uuid4().hex
 
 
+class Denied(tuple):
+    """Keep the (None, retry_after) interface while retaining the actual bound."""
+    def __new__(cls, retry_after, reason, limit, current):
+        result = super().__new__(cls, (None, retry_after))
+        result.reason = reason
+        result.limit = limit
+        result.current = current
+        return result
+
+
 def _limits():
     return max(0, int(getattr(settings, "GATEWAY_RATE_PER_MINUTE", 0))), max(0, int(getattr(settings, "GATEWAY_MAX_CONCURRENT", 0)))
 
@@ -93,8 +107,11 @@ def allow(key, rate=None, concurrent=None):
     if client is not None:
         lease = Admission(key)
         lease.client = client
-        wait = int(client.eval(_ACQUIRE, 2, *_keys(key), rate, concurrent, lease.token))
-        return (None, wait) if wait else lease
+        wait, reason, count = map(int, client.eval(_ACQUIRE, 2, *_keys(key), rate, concurrent, lease.token))
+        if wait:
+            return Denied(wait, 'requests_per_minute' if reason == 1 else 'concurrent_requests',
+                          rate if reason == 1 else concurrent, count)
+        return lease
     now = time.monotonic()
     with _lock:
         for stale in list(_windows):
@@ -108,13 +125,13 @@ def allow(key, rate=None, concurrent=None):
             while q and now - q[0] >= 60:
                 q.popleft()
             if len(q) >= rate:
-                return None, max(1, math.ceil(60 - (now - q[0])))
+                return Denied(max(1, math.ceil(60 - (now - q[0]))), 'requests_per_minute', rate, len(q))
             q.append(now)
         current = _active.get(key, 0)
         if concurrent and current >= concurrent:
             if rate and q and q[-1] == now:
                 q.pop()
-            return None, 1
+            return Denied(1, 'concurrent_requests', concurrent, current)
         _active[key] = current + 1
     return Admission(key)
 
@@ -170,6 +187,9 @@ def _key_admission_params(token):
         if not row or row.status != "active":
             return None, rate, g_conc
         mc = getattr(row, "max_concurrent", None)
+        rpm = getattr(row, "rate_per_minute", None)
+        if rpm is not None:
+            rate = max(0, int(rpm))
         if mc is None:
             conc = g_conc
         else:
@@ -192,27 +212,16 @@ async def _finish_thread(fn, *args):
 
 
 class GatewayAdmissionMiddleware:
-    def __init__(self, app):
+    def __init__(self, app, wait_timeout=0, max_waiters_per_key=32, max_waiters=512):
         self.app = app
+        self.wait_timeout = max(0, float(wait_timeout))
+        self.max_waiters_per_key = max_waiters_per_key
+        self.max_waiters = max_waiters
 
-    async def __call__(self, scope, receive, send):
-        from starlette.responses import JSONResponse
-        if scope['type'] != 'http' or not scope.get('path', '').startswith('/v1/'):
-            return await self.app(scope, receive, send)
-        headers = dict(scope.get('headers', []))
-        token = headers.get(b'x-api-key', b'').decode('latin1')
-        if not token:
-            auth = headers.get(b'authorization', b'').decode('latin1')
-            token = auth[7:].strip() if auth.startswith('Bearer ') else ''
-        # Only authenticated IDs enter the bounded state, never raw client tokens.
-        # per-key 并发：解析后的 concurrent 可能与全局不同，须一并传给 allow。
-        key, rate, concurrent = await _finish_thread(_key_admission_params, token) if token \
-            else (None, *_limits())
-        if key is None or not (rate or concurrent):
-            return await self.app(scope, receive, send)
+    async def _acquire_once(self, key, rate, concurrent):
         pending = asyncio.create_task(asyncio.to_thread(allow, key, rate, concurrent))
         try:
-            result = await asyncio.shield(pending)
+            return await asyncio.shield(pending)
         except asyncio.CancelledError:
             with anyio.CancelScope(shield=True):
                 while not pending.done():
@@ -224,12 +233,85 @@ class GatewayAdmissionMiddleware:
                 if not isinstance(result, tuple):
                     await _finish_thread(release, result)
             raise
+
+    async def _admit(self, key, rate, concurrent):
+        from admin import request_metrics
+        result = await self._acquire_once(key, rate, concurrent)
+        if not isinstance(result, tuple) or not self.wait_timeout:
+            return result
+        with _lock:
+            if (_waiters.get(key, 0) >= self.max_waiters_per_key or
+                    sum(_waiters.values()) >= self.max_waiters):
+                return result
+            _waiters[key] = _waiters.get(key, 0) + 1
+        started = time.monotonic()
+        deadline = started + self.wait_timeout
+        try:
+            while isinstance(result, tuple):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return result
+                reason = getattr(result, 'reason', 'concurrent_requests')
+                request_metrics.set_phase('gateway_wait_' + reason)
+                delay = result[1] if reason == 'requests_per_minute' else random.uniform(.2, .4)
+                await asyncio.sleep(min(remaining, delay))
+                result = await self._acquire_once(key, rate, concurrent)
+            request_metrics.set_phase('gateway_admission')
+            return result
+        finally:
+            request_metrics.add_stage('gateway_queue_wait', (time.monotonic() - started) * 1000)
+            with _lock:
+                count = _waiters.get(key, 1) - 1
+                if count:
+                    _waiters[key] = count
+                else:
+                    _waiters.pop(key, None)
+
+    async def __call__(self, scope, receive, send):
+        from starlette.responses import JSONResponse
+        # Model listing / health probes do not start inference and must not
+        # consume the same quota or occupy a long-running generation slot.
+        if (scope['type'] != 'http' or not scope.get('path', '').startswith('/v1/')
+                or scope.get('method', 'POST').upper() in ('GET', 'HEAD', 'OPTIONS')):
+            return await self.app(scope, receive, send)
+        headers = dict(scope.get('headers', []))
+        token = headers.get(b'x-api-key', b'').decode('latin1')
+        if not token:
+            auth = headers.get(b'authorization', b'').decode('latin1')
+            token = auth[7:].strip() if auth.startswith('Bearer ') else ''
+        # Only authenticated IDs enter the bounded state, never raw client tokens.
+        # per-key 并发：解析后的 concurrent 可能与全局不同，须一并传给 allow。
+        key, rate, concurrent = await _finish_thread(_key_admission_params, token) if token \
+            else (None, *_limits())
+        from admin import request_metrics
+        record = request_metrics.current.get()
+        if record is not None and key is not None:
+            try:
+                record['key_id'] = int(key)
+            except (TypeError, ValueError):
+                pass
+        if key is None or not (rate or concurrent):
+            return await self.app(scope, receive, send)
+        try:
+            result = await self._admit(key, rate, concurrent)
         except Exception:
             return await JSONResponse({'error': {'message': '流量控制服务暂不可用', 'type': 'gateway_unavailable'}},
                                       status_code=503, headers={'Retry-After': '5'})(scope, receive, send)
         if isinstance(result, tuple):
             _, retry = result
-            return await JSONResponse({'error': {'message': 'API Key 请求过于频繁，请稍后重试', 'type': 'rate_limit_exceeded'}},
+            reason = getattr(result, 'reason', 'unknown')
+            limit = getattr(result, 'limit', None)
+            count = getattr(result, 'current', None)
+            if reason == 'concurrent_requests':
+                message = f'API Key 并发已达上限（当前 {count} / 上限 {limit}），请等待在途请求结束后重试'
+            elif reason == 'requests_per_minute':
+                message = f'API Key 每分钟请求数已达上限（{limit} 次/分钟），请在 {retry} 秒后重试；提高并发上限不会解除此限制'
+            else:
+                message = 'API Key 请求过于频繁，请稍后重试'
+            request_metrics.mark_request_error(reason)
+            return await JSONResponse({'error': {'message': message, 'type': 'rate_limit_exceeded',
+                                                'code': reason, 'limit': limit, 'current': count,
+                                                'retry_after': retry}},
                                       status_code=429, headers={'Retry-After': str(retry)})(scope, receive, send)
         owner = asyncio.current_task()
         async def renew():

@@ -137,6 +137,7 @@ def init_db() -> bool:
         _ensure_column("usage_logs", "ttfb_ms", "INT", "NULL")
         _ensure_column("usage_logs", "latency_ms", "INT", "NULL")
         _ensure_column("usage_logs", "error_kind", "VARCHAR(32)", "DEFAULT ''")
+        _ensure_column("usage_logs", "diagnostic_json", "TEXT", "NULL")
 
         # 迁移：给 accounts 表加稳定性状态机字段
         _ensure_column("accounts", "err_count", "INT", "DEFAULT 0")
@@ -144,6 +145,11 @@ def init_db() -> bool:
         _ensure_column("accounts", "cool_kind", "VARCHAR(16)", "DEFAULT ''")
         _ensure_column("accounts", "last_err_at", "DATETIME", "NULL")
         _ensure_column("accounts", "last_err_msg", "VARCHAR(255)", "DEFAULT ''")
+        _ensure_column("accounts", "last_upstream_error", "TEXT", "NULL")
+        _ensure_column("accounts", "selection_priority", "INT", "NULL")
+        _ensure_column("accounts", "max_in_flight", "INT", "NULL")
+        _ensure_column("account_model_cool", "upstream_error", "TEXT", "NULL")
+        _ensure_column("account_model_cool", "reset_source", "VARCHAR(24)", "DEFAULT ''")
         _ensure_column("accounts", "last_picked_at", "DATETIME", "NULL")
 
         # 迁移：熔断 / session-dead 连续计数 / 连败降权 / 快过期积分
@@ -171,6 +177,7 @@ def init_db() -> bool:
         _ensure_column("api_keys", "account_id", "INT", "NULL")
         # 迁移：api_keys 加 max_concurrent（NULL=全局；0=不限；N=N 路并发）
         _ensure_column("api_keys", "max_concurrent", "INT", "NULL")
+        _ensure_column("api_keys", "rate_per_minute", "INT", "NULL")
         # Ownership must have a database constraint, including concurrent creates.
         next(i for i in models.ApiKey.__table__.indexes
              if i.name == "ux_api_keys_account").create(bind=engine, checkfirst=True)

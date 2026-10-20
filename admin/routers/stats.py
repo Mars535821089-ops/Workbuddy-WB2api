@@ -8,10 +8,10 @@
   失败请求若也计进去会虚高消费；
 - 请求数则统计全部调用（含失败），用于反映真实负载。
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -37,6 +37,23 @@ def _window(days: int) -> datetime:
     return datetime.utcnow() - timedelta(days=max(1, days))
 
 
+def _time_filters(days: int, start: Optional[datetime], end: Optional[datetime]):
+    """Explicit bounds override the rolling window, using the logs' UTC clock."""
+    def utc(value):
+        return value.astimezone(timezone.utc).replace(tzinfo=None) if value and value.tzinfo else value
+    start, end = utc(start), utc(end)
+    if start and end and start > end:
+        raise HTTPException(400, "开始日期不能晚于结束日期")
+    filters = []
+    if start is not None:
+        filters.append(UsageLog.created_at >= start)
+    elif end is None:
+        filters.append(UsageLog.created_at >= _window(days))
+    if end is not None:
+        filters.append(UsageLog.created_at <= end)
+    return filters
+
+
 def _ok_filter(q):
     return q.filter(UsageLog.error_kind.in_(_OK_KINDS))
 
@@ -49,6 +66,8 @@ def usage_stats(
     model: Optional[str] = None,
     account_id: Optional[int] = None,
     use_case: Optional[str] = None,
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
     _: bool = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -63,12 +82,10 @@ def usage_stats(
 
     返回结构直接对应前端「使用记录」页面，避免前端多次请求拼装。
     """
-    since = _window(days)
-
     # ── 统一筛选条件 ────────────────────────────────────────────────────
     # 只构造一次，保证概览/分布/趋势三个口径完全一致 ——
     # 分开写很容易出现「卡片数字和图表对不上」的经典问题。
-    filters = [UsageLog.created_at >= since]
+    filters = _time_filters(days, start, end)
     if key_id is not None:
         filters.append(UsageLog.api_key_id == key_id)
     if model:
@@ -183,7 +200,9 @@ def usage_stats(
         ]
 
     return {
-        "range_days": days,
+        "range_days": None if start or end else days,
+        "start": start.isoformat() if start else None,
+        "end": end.isoformat() if end else None,
         "granularity": granularity,
         "filters": {
             "key_id": key_id,
@@ -222,6 +241,8 @@ def usage_stats(
 @router.get("/usage/options")
 def usage_filter_options(
     days: int = 30,
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
     _: bool = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -230,12 +251,12 @@ def usage_filter_options(
     只返回**窗口内真实出现过**的值，避免下拉里塞一堆从没用过的模型，
     让人以为「有数据」却筛出空结果。
     """
-    since = _window(days)
+    filters = _time_filters(days, start, end)
 
     models = [
         r[0] for r in
         db.query(UsageLog.model)
-        .filter(UsageLog.created_at >= since, UsageLog.model.isnot(None))
+        .filter(*filters, UsageLog.model.isnot(None))
         .group_by(UsageLog.model)
         .order_by(func.count(UsageLog.id).desc())
         .all() if r[0]
@@ -243,7 +264,7 @@ def usage_filter_options(
     cases = [
         r[0] for r in
         db.query(UsageLog.use_case)
-        .filter(UsageLog.created_at >= since, UsageLog.use_case.isnot(None))
+        .filter(*filters, UsageLog.use_case.isnot(None))
         .group_by(UsageLog.use_case)
         .order_by(func.count(UsageLog.id).desc())
         .all() if r[0]

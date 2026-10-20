@@ -35,6 +35,7 @@ import httpx
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 import uvicorn
+from admin.upstream_errors import UpstreamError
 
 import upstream_compat
 
@@ -453,9 +454,9 @@ class CredentialManager:
         try:
             data = r.json()
         except Exception as e:
-            raise RuntimeError(f"后端返回非 JSON {method} {path} HTTP {r.status_code}: {r.text[:200]}")
+            raise UpstreamError(f"后端返回非 JSON {method} {path}", r.status_code, r.text) from e
         if r.status_code != 200 or data.get("code") != 0:
-            raise RuntimeError(f"后端请求失败 {method} {path}: HTTP {r.status_code} / {data.get('msg', data)}")
+            raise UpstreamError(f"后端请求失败 {method} {path}", r.status_code, r.text)
         return data
 
     def _request_backend_soft(self, method: str, path: str, json_body: dict | None = None) -> dict:
@@ -477,7 +478,7 @@ class CredentialManager:
         try:
             return r.json()
         except Exception as e:
-            raise RuntimeError(f"后端返回非 JSON {method} {path} HTTP {r.status_code}: {r.text[:200]}")
+            raise UpstreamError(f"后端返回非 JSON {method} {path}", r.status_code, r.text) from e
 
     def _enterprise_path_key(self) -> str:
         """返回模型列表 endpoint 里的 enterprise 段：personal 或 enterpriseId。"""
@@ -1295,7 +1296,7 @@ def _chat_body_desensitize(body: dict, *, force_compact: bool = False) -> dict:
         desensitize_harness_user=True,
         desensitize_tools=True,
         compact_harness=(force_compact or not CONFIG.get("no_compact")),
-        strip_tool_metadata=True,
+        strip_tool_metadata=False,
     )
 
 

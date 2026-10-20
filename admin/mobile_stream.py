@@ -4,10 +4,54 @@ import json
 import re
 
 import anyio
+from starlette.responses import Response, StreamingResponse
 
 from admin import request_metrics
 
 _boundary = re.compile(rb'\r?\n\r?\n')
+HEARTBEAT_INTERVAL = 5
+
+
+class MobileResponse(Response):
+    """Watch disconnects during preflight and keep slow first tokens alive.
+
+    Preflight may still return an HTTP error before the first heartbeat. Once
+    bytes have been sent, failures must use the protocol's SSE error event.
+    """
+    def __init__(self, source, prepare):
+        super().__init__()
+        self.source = source
+        self.prepare = prepare
+
+    async def __call__(self, scope, receive, send):
+        stream = events(self.source, interval=HEARTBEAT_INTERVAL)
+        response = None
+
+        async def run():
+            nonlocal response
+            try:
+                response = await self.prepare(stream)
+                if isinstance(response, StreamingResponse):
+                    # This outer task group already owns disconnect monitoring,
+                    # including the wait before any response headers are sent.
+                    await response.stream_response(send)
+                else:
+                    await response(scope, receive, send)
+            finally:
+                with anyio.CancelScope(shield=True):
+                    if isinstance(response, StreamingResponse):
+                        await response.body_iterator.aclose()
+                    await stream.aclose()
+
+        async with anyio.create_task_group() as group:
+            async def produce():
+                await run()
+                group.cancel_scope.cancel()
+            group.start_soon(produce)
+            while True:
+                if (await receive())['type'] == 'http.disconnect':
+                    group.cancel_scope.cancel()
+                    break
 
 
 def _event(frame):

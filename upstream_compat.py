@@ -1084,7 +1084,55 @@ class StreamCommitBuffer:
 
 
 # ---------------------------------------------------------------------------
-# 10. 统一入口
+# 10. 第三方 harness 兼容（DeepSeek Harness / pi-ai / Codex 等）
+# ---------------------------------------------------------------------------
+#
+# 逐项实测（2026-10-20，deepseek-v4.1-flash 直连上游）确认了**唯一**会被
+# 整条拒掉的字段，因此这里只修这一处：
+#
+#   messages[].role == "developer"  →  HTTP 400 code=11128
+#       "Illegal API invocation from an unapproved channel"
+#
+#   store / max_tokens / stream_options / tools /
+#   prompt_cache_key / prompt_cache_retention / metadata / user / service_tier
+#                                   →  全部 HTTP 200，上游照收
+#
+# 后面这组**故意不删**，有两个理由：
+#   1. 上游接受它们，删了没有收益；
+#   2. `admin/pool.py` 正把 `prompt_cache_key`（pi-ai 系客户端的会话 ID）和
+#      `metadata.conversation_id` 当作**会话粘性键**。在粘性键算出来之后把它们
+#      从请求体里抹掉，会让这些客户端在号池里失去会话粘性 —— 上游前缀缓存被
+#      打散、费用上升，这正是 pool.py 注释里要避免的事。
+#      所以：**只看上游实测结果增删字段，别顺手「清理」有语义的字段。**
+
+
+def normalize_harness_body(obj: dict) -> dict:
+    """DeepSeek Harness / pi-ai 这类客户端的最小兼容补丁。
+
+    与 `prepare_upstream_body()` 的区别：本函数只做「上游明确不接受的东西」
+    的清理，**不改 stream / 不改思考强度 / 不删任何上游能接受的字段**。
+    用在端点自己已经管好 stream 与 thinking 的链路上（如 admin 的
+    /v1/chat/completions），避免重复改写。
+
+    做两件事：
+      1. role 归一（developer → system）—— 上游 role 白名单不含 developer，
+         命中即 400 code=11128（"Illegal API invocation from an unapproved
+         channel"）。pi-ai 在「模型开了 reasoning 且没显式声明
+         compat.supportsDeveloperRole=false」时就会发 developer，
+         于是 DeepSeek Harness 一开思考就整条被拒。
+      2. 孤儿 tool_call 清理（安全网，防 11148）。
+
+    返回改写统计 ``{"roles": n, "orphans": n}``，
+    obj 就地改写，调用方原样发送即可。
+    """
+    return {
+        "roles": normalize_roles(obj),
+        "orphans": cleanup_orphan_tool_calls(obj),
+    }
+
+
+# ---------------------------------------------------------------------------
+# 11. 统一入口
 # ---------------------------------------------------------------------------
 
 def prepare_upstream_body(obj: dict, *, sanitize: bool = False,

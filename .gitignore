@@ -35,12 +35,29 @@ logs/
 # ===== 本地工作记忆与工具态（不在仓库内） =====
 .workbuddy/
 
+# ===== 构建产物与本机环境（不入库）=====
+# dist/ 是双端安装包（几十 MB，走 GitHub Release 而不是 Git），
+# build/ 与 .desktop-build/ 是打包中间物和独立 venv，
+# android 的两个 build/ 是 Gradle 产物。它们都能由源码重建。
+dist/
+build/
+.desktop-build/
+android/build/
+android/app/build/
+android/.gradle/
+.backup/
+.env.bak-*
+admin/config.py.bak-*
+.htaccess
+
 # ===== 本地部署 / SSH 快捷脚本（含服务器 IP 与密码，禁止提交） =====
 # 这些只是本机往线上推的快捷脚本，保留在本地即可，切勿上传。
 ssh_exec.py
 ssh_run.py
 ssh_sync.py
 ssh_probe_backup.py
+ssh_probe*.py
+ssh_run_probe.py
 sync_auth.py
 sync_auth.bat
 start_admin.bat
@@ -63,13 +80,20 @@ test/
 # docs/ 里是协议逆向取证与排查记录，含**未脱敏的真实手机号、真实 token
 # 片段、以及本地账号池的真实数据**（例：某次实测记录里直接写了手机号）。
 # 这些属于内部资料而非产品代码，一律不上传；需要时本地保留。
-docs/
+docs/*
+# 例外：发版公告是给用户看的公开内容，必须随版本提交。
+# 注意 git 不会进入被整体排除的目录，所以这里用 docs/* 而不是 docs/ 开头，
+# 否则 !docs/RELEASE_NOTES_*.md 永远无法生效。
+!docs/RELEASE_NOTES_*.md
 
 # ===== 逆向取证 / 本地诊断脚本（不提交） =====
 # 这些脚本依赖本机安装包、真实账号、一次性排查结论（有的还含已被证伪的假设），
 # 属于本地工具而非产品代码，一律不上传。
 # scripts/daemon.ps1 是部署脚本，保留。
 scripts/*.py
+# 例外：双端构建脚本属于产品代码，打包流程直接依赖它们。
+!scripts/build_desktop.py
+!scripts/build_android.py
 
 # ===== 强制保留（即便以点开头也要提交） =====
 !.gitignore
@@ -79,55 +103,3 @@ scripts/*.py
 _zcode_probe/
 _chrome_profile*/
 
-# Desktop build outputs (never package local credentials or databases)
-.desktop-build/
-build/
-dist/
-desktop/assets/*.ico
-desktop/assets/*.png
-
-!scripts/build_desktop.py
-!tests/
-tests/*
-!tests/test_desktop.py
-!tests/test_build.py
-!tests/test_release_platforms.py
-!tests/test_release_notes.cjs
-!tests/test_android.py
-!tests/test_android_settings.py
-!tests/test_mobile_latency.py
-!tests/test_android_http.py
-!tests/test_credentials.py
-!tests/test_account_automation.py
-!tests/test_account_resources.py
-!tests/__init__.py
-!tests/test_database_isolation.py
-!tests/test_growth_plan.py
-!tests/test_growth_center.py
-!tests/test_key_account_binding.py
-!tests/test_anthropic_tool_pairing.py
-!tests/test_desensitize_user_payload.py
-!tests/test_key_concurrent_limit.py
-!scripts/build_android.py
-android/.gradle/
-android/local.properties
-android/**/build/
-*.jks
-*.keystore
-
-
-# Local SQLite databases (runtime data)
-workbuddy_admin.db
-workbuddy_admin.db-shm
-workbuddy_admin.db-wal
-
-# Local credentials file
-登录密码.txt
-
-# Sanitized 2api hardening notes and synthetic offline regressions
-!docs/
-docs/*
-!docs/2api-increment-risk-scheduling.md
-!tests/test_risk_scheduling.py
-!tests/test_model_group_access.py
-!tests/test_model_listing.py

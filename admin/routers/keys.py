@@ -3,7 +3,7 @@ import base64
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -17,13 +17,14 @@ router = APIRouter(prefix="/api/keys", tags=["keys"])
 
 class KeyIn(BaseModel):
     name: str = ""
-    credit_limit: float = 0
-    unlimited: bool = False
+    credit_limit: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    unlimited: bool | None = None
     note: str = ""
     group_id: int = 0  # 0 = 不绑定分组（可用全部启用模型）
     account_id: int | None = None  # 0 / NULL = 公共池
     # 该 Key 并发上限：None=跟随全局；0=不限；N=最多 N 路在途
     max_concurrent: int | None = None
+    rate_per_minute: int | None = None
 
 
 def _gen_key() -> str:
@@ -62,6 +63,7 @@ def list_keys(_: bool = Depends(require_admin), db: Session = Depends(get_db)):
             "credit_used": k.credit_used,
             "unlimited": bool(k.unlimited),
             "max_concurrent": k.max_concurrent,
+            "rate_per_minute": k.rate_per_minute,
             "status": k.status,
             "note": k.note,
             "group_id": int(k.group_id or 0),
@@ -76,7 +78,7 @@ def list_keys(_: bool = Depends(require_admin), db: Session = Depends(get_db)):
 
 
 def _normalize_max_concurrent(value) -> int | None:
-    """规范化并发上限：None=跟随全局；0=不限；N>=1=最多 N 路。非法值回退 None。"""
+    """规范化流量上限：None=跟随全局；0=不限；N>=1=该项上限。"""
     if value is None or value == "":
         return None
     try:
@@ -104,9 +106,10 @@ def create_key(body: KeyIn, _: bool = Depends(require_admin), db: Session = Depe
         key_hash=hash_key(raw),
         key_prefix=raw[:14],
         key_full=_encode_key(raw),
-        credit_limit=body.credit_limit,
-        unlimited=1 if body.unlimited else 0,
+        credit_limit=body.credit_limit if body.credit_limit is not None else 0,
+        unlimited=int(body.credit_limit is None or body.unlimited is True),
         max_concurrent=_normalize_max_concurrent(body.max_concurrent),
+        rate_per_minute=_normalize_max_concurrent(body.rate_per_minute),
         note=body.note,
         group_id=gid,
         account_id=aid,
@@ -123,6 +126,7 @@ def create_key(body: KeyIn, _: bool = Depends(require_admin), db: Session = Depe
         "credit_limit": k.credit_limit,
         "unlimited": bool(k.unlimited),
         "max_concurrent": k.max_concurrent,
+        "rate_per_minute": k.rate_per_minute,
         "group_id": int(k.group_id or 0),
         "account_id": k.account_id,
     }
@@ -176,11 +180,29 @@ def patch_key(key_id: int, body: dict, _: bool = Depends(require_admin), db: Ses
     if "name" in body:
         k.name = body["name"]
     if "credit_limit" in body:
-        k.credit_limit = float(body["credit_limit"])
+        value = body["credit_limit"]
+        if value is None or value == "":
+            k.credit_limit = 0
+            k.unlimited = 1
+        else:
+            import math
+            try:
+                value = float(value)
+                if not math.isfinite(value) or value < 0:
+                    raise ValueError()
+            except (ValueError, TypeError):
+                raise HTTPException(400, "Key 额度必须为空或大于等于 0 的有限数字") from None
+            k.credit_limit = value
+            k.unlimited = 0
     if "unlimited" in body:
-        k.unlimited = 1 if body["unlimited"] else 0
+        if body["unlimited"]:
+            k.unlimited = 1
+        elif "credit_limit" not in body or body["credit_limit"] not in (None, ""):
+            k.unlimited = 0
     if "max_concurrent" in body:
         k.max_concurrent = _normalize_max_concurrent(body["max_concurrent"])
+    if "rate_per_minute" in body:
+        k.rate_per_minute = _normalize_max_concurrent(body["rate_per_minute"])
     if "status" in body and body["status"] in ("active", "revoked"):
         k.status = body["status"]
     if "note" in body:

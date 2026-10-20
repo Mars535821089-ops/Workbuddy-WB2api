@@ -5,16 +5,16 @@ import os
 import shutil
 from datetime import datetime, timezone, timedelta
 import time
-from typing import Optional
+from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, validator
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, case
 
-from admin import backend, jobrunner, wb_login
+from admin import backend, jobrunner, wb_login, upstream_errors
 from admin.account_binding import binding_owners, scope_accounts
-from admin.credential_codec import CredentialDecodeError, normalize_credential
+from admin.credential_codec import CredentialDecodeError, encrypt_credential, normalize_credential
 from admin.config import settings
 from admin.db import SessionLocal, get_db
 from admin.models import Account, AccountModelCooldown, ApiKey, ModelConfig, UsageLog
@@ -55,6 +55,7 @@ class ImportLocalIn(BaseModel):
 class ExportIn(BaseModel):
     ids: list[int] = []      # 空 = 全部
     include_disabled: bool = False
+    format: Literal['backup', 'client'] = 'backup'
 
 
 def _uid_of(auth_json: str) -> str:
@@ -157,7 +158,7 @@ def _find_dup(db: Session, auth_json: str) -> Account | None:
             .first())
 
 
-def _export_items(rows: list[Account]) -> list[str]:
+def _export_items(rows: list[Account], format: str = 'backup') -> list[str]:
     """把账号记录还原成 .info 原文列表。
 
     导出的是 auth_json 原文（与上传接受的格式完全一致），
@@ -172,23 +173,26 @@ def _export_items(rows: list[Account]) -> list[str]:
             json.loads(raw)
         except Exception:
             continue  # 跳过损坏记录，避免整个导出失败
-        items.append(raw)
+        items.append(_client_export(raw) if format == 'client' else raw)
     return items
+
+
+def _client_export(raw: str) -> str:
+    try:
+        return encrypt_credential(raw)
+    except CredentialDecodeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
 
 
 @router.post("/export")
 def export_accounts(
     body: ExportIn,
+    response: Response,
     _: bool = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """导出账号登录态。
-
-    返回 {items: [.info 原文...]}，与「批量上传」接受的格式一致，
-    导出的内容可以直接原样再传回来（round-trip）。
-
-    注意：导出内容含 token，等同账号凭据，请勿外传。
-    """
+    """Export portable backups or official encrypted client credentials."""
+    response.headers['Cache-Control'] = 'no-store'
     q = db.query(Account)
     if body.ids:
         q = q.filter(Account.id.in_(body.ids))
@@ -196,8 +200,9 @@ def export_accounts(
         q = q.filter(Account.status == "active")
     rows = q.order_by(Account.id).all()
 
-    items = _export_items(rows)
+    items = _export_items(rows, body.format)
     return {
+        "format": body.format,
         "total": len(rows),
         "count": len(items),
         "skipped": len(rows) - len(items),
@@ -231,6 +236,25 @@ def _apply_meta(acc: Account, auth_json: str, profile: dict | None = None,
     """
     meta = backend.parse_auth_meta(auth_json)
     prof = profile or {}
+    try:
+        old_auth = json.loads(acc.auth_json or '{}').get('auth')
+        new_auth = json.loads(auth_json or '{}').get('auth')
+        changed = bool(new_auth) and new_auth != old_auth
+    except (ValueError, TypeError, AttributeError):
+        changed = bool(auth_json) and auth_json != acc.auth_json
+    if changed:
+        session_disabled = acc.cool_kind == 'session_dead' and acc.status == 'disabled'
+        acc.last_err_msg = ''
+        acc.last_err_at = None
+        acc.last_upstream_error = ''
+        acc.session_dead_fails = 0
+        if acc.cool_kind == 'session_dead':
+            acc.cool_kind = ''
+            acc.cool_until = None
+        # A manual disable must survive credential import. Only restore a
+        # session-disabled account after live verification of the new credential.
+        if session_disabled and (profile or balance):
+            acc.status = 'active'
     acc.auth_json = auth_json
     uid = str(prof.get("uid") or meta.get("uid") or "")
     if uid:
@@ -335,6 +359,16 @@ def _sync_credit_snapshot(acc: Account, packages: list[dict]) -> dict:
     return summary
 
 
+def _remember_upstream_error(acc: Account, error) -> dict:
+    raw = getattr(error, 'raw_body', str(error))
+    status = getattr(error, 'http_status', 0)
+    info = upstream_errors.error_info(raw, status)
+    acc.last_upstream_error = json.dumps(info, ensure_ascii=False)
+    acc.last_err_at = datetime.utcnow()
+    acc.last_err_msg = str(error)[:255]
+    return info
+
+
 def _refresh_balance(acc: Account, with_expiry: bool = False, on_error=None) -> bool:
     """刷新账号余额。
 
@@ -353,12 +387,14 @@ def _refresh_balance(acc: Account, with_expiry: bool = False, on_error=None) -> 
                 try:
                     _sync_credit_snapshot(acc, sess.fetch_credit_details())
                 except Exception as error:
+                    _remember_upstream_error(acc, error)
                     if on_error:
                         on_error(error)
             acc.auth_json = sess.updated_json()  # 回写可能刷新的 token
         acc.last_sync_at = datetime.utcnow()
         return True
     except Exception as error:
+        _remember_upstream_error(acc, error)
         if on_error:
             on_error(error)
         return False
@@ -444,6 +480,7 @@ def list_accounts(_: bool = Depends(require_admin), db: Session = Depends(get_db
             "enterprise_id": a.enterprise_id,
             "domain": a.domain,
             "status": a.status,
+            "max_in_flight": a.max_in_flight,
             "bound_key_id": owners[a.id].id if owners.get(a.id) else None,
             "bound_key_name": owners[a.id].name if owners.get(a.id) else "",
             "balance_total": a.balance_total,
@@ -452,6 +489,7 @@ def list_accounts(_: bool = Depends(require_admin), db: Session = Depends(get_db
             "last_used_at": a.last_used_at.isoformat() if a.last_used_at else None,
             "created_at": a.created_at.isoformat() if a.created_at else None,
             "model_limits": limits.get(a.id, []),
+            "upstream_error": upstream_errors.stored_info(a.last_upstream_error, a.last_err_msg),
             "post_login_automation": automation.get(a.id),
             "resource_initialization": resources.get(a.id),
             **_gateway_fields(a, now),
@@ -514,12 +552,16 @@ def _active_model_limits(db: Session, now: datetime) -> dict:
     result = {}
     for row in db.query(AccountModelCooldown).filter(AccountModelCooldown.until > now).all():
         # Old daily entries may have been stored as model_rate; report accurately.
-        from admin.routers.proxy import _json_code, _MODEL_RATE_CODES
-        daily = row.kind == "model_daily" or _json_code(row.reason or "") in _MODEL_RATE_CODES
+        from admin.routers.proxy import _MODEL_RATE_CODES
+        evidence = upstream_errors.stored_info(row.upstream_error, row.reason or '')
+        code = evidence.get('code')
+        daily = code in _MODEL_RATE_CODES or (not code and row.kind == 'model_daily')
         from admin.model_limits import queue_retry_time
-        if (row.reason or "").startswith("[estimated]"):
+        if row.reset_source:
+            source = row.reset_source
+        elif (row.reason or "").startswith("[estimated]"):
             source = "estimated"
-        elif (daily and row.kind == "model_daily") or (row.reason or "").startswith("[upstream]"):
+        elif (row.reason or "").startswith("[upstream]"):
             source = "upstream"
         elif row.kind == "model_queue" and queue_retry_time(row.reason or "", now):
             source = "queue_retry"
@@ -532,7 +574,10 @@ def _active_model_limits(db: Session, now: datetime) -> dict:
             "remaining_seconds": max(0, int((row.until - now).total_seconds())),
             "reset_source": source,
             "hits": row.hits or 0,
-            "upstream_code": _json_code(row.reason or ""),
+            "upstream_code": code,
+            "upstream_error": evidence,
+            "quota_total": None,
+            "quota_remaining": None,
         })
     return result
 
@@ -545,10 +590,13 @@ def model_limits(_: bool = Depends(require_admin), db: Session = Depends(get_db)
     limits = _active_model_limits(db, now)
     public_ids = {a.id for a in scope_accounts(db.query(Account)).all()}
     start = (now + timedelta(hours=8)).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(hours=8)
-    usage = {(account_id, model): {"requests_today": count, "tokens_today": int(tokens or 0)}
-             for account_id, model, count, tokens in db.query(
-                 UsageLog.account_id, UsageLog.model, func.count(UsageLog.id), func.sum(UsageLog.total_tokens))
-             .filter(UsageLog.created_at >= start, UsageLog.error_kind == "success")
+    usage = {(account_id, model): {"requests_today": count, "successes_today": int(successes or 0),
+                                  "tokens_today": int(tokens) if tokens is not None else None}
+             for account_id, model, count, successes, tokens in db.query(
+                 UsageLog.account_id, UsageLog.model, func.count(UsageLog.id),
+                 func.sum(case((UsageLog.error_kind.in_(('', 'success')), 1), else_=0)),
+                 func.sum(UsageLog.total_tokens))
+             .filter(UsageLog.created_at >= start)
              .group_by(UsageLog.account_id, UsageLog.model).all()}
     items = []
     for account in rows:
@@ -556,8 +604,10 @@ def model_limits(_: bool = Depends(require_admin), db: Session = Depends(get_db)
             items.append({**entry, "account_id": account.id,
                           "account_name": account.name or account.uid,
                           "account_status": account.status,
-                          **usage.get((account.id, entry["model"]), {"requests_today": 0, "tokens_today": 0})})
+                          **usage.get((account.id, entry["model"]),
+                                      {"requests_today": 0, "successes_today": 0, "tokens_today": None})})
     from admin.pool import POOL
+    from admin.routers.proxy import _looks_login_dead
     summary = []
     configs = {c.model_id: c for c in db.query(ModelConfig).filter(ModelConfig.enabled == 1, ModelConfig.level == "system").all()}
     for model in sorted(set(configs) | {e["model"] for e in items}):
@@ -566,15 +616,20 @@ def model_limits(_: bool = Depends(require_admin), db: Session = Depends(get_db)
         blocked = {e["account_id"] for e in items if e["model"] == model}
         available = [a for a in rows if a.id in public_ids and a.status == "active" and a.id not in blocked
                      and _gateway_fields(a, now)["gateway_state"] == "ready"
+                     and not _looks_login_dead(a, now) and not POOL.waf.active()
                      and (free or (a.balance_remain or 0) > 0)
                      and not POOL.inflight.full(a.uid or "", settings.MAX_IN_FLIGHT)]
         summary.append({"model": model, "free": free,
                         "available_accounts": len(available), "limited_accounts": len(blocked),
                         "requests_today": sum(v["requests_today"] for (_, m), v in usage.items() if m == model),
-                        "tokens_today": sum(v["tokens_today"] for (_, m), v in usage.items() if m == model)})
+                        "tokens_today": sum(v["tokens_today"] or 0 for (_, m), v in usage.items() if m == model)})
     return {"items": items, "models": summary, "observed_at": now.isoformat() + "Z",
             "waf_remaining_seconds": POOL.waf.remaining(),
-            "usage_scope": "gateway_only", "daily_quota_total": None}
+            "usage_scope": "gateway_only", "daily_quota_total": None,
+            "account_errors": [{"account_id": a.id, "account_name": a.name or a.uid,
+                                "gateway_state": _gateway_fields(a, now),
+                                "upstream_error": upstream_errors.stored_info(a.last_upstream_error, a.last_err_msg)}
+                               for a in rows if a.last_err_msg or a.last_upstream_error]}
 
 
 class ClearModelLimit(BaseModel):
@@ -636,7 +691,6 @@ def add_account(body: AccountIn, _: bool = Depends(require_admin), db: Session =
     if dup:
         # 重复上传 = 用新凭证覆盖 + 刷新余额（原来直接 return，
         # 于是重传一份新凭证后列表还显示旧余额，看起来「没生效」）
-        dup.auth_json = body.auth_json
         _apply_meta(dup, body.auth_json, profile=profile, balance=balance)
         db.commit()
         _post_login_automation(dup.id, dup.name or dup.uid)
@@ -648,11 +702,48 @@ def add_account(body: AccountIn, _: bool = Depends(require_admin), db: Session =
     db.add(acc)
     db.commit()
     db.refresh(acc)
-    _refresh_balance(acc)
+    _refresh_balance(acc, with_expiry=True)
     db.commit()
     _post_login_automation(acc.id, acc.name or acc.uid)
     return {"id": acc.id, "name": acc.name, "ok": True, "duplicated": False,
             "verified": True, "balance_remain": acc.balance_remain}
+
+
+def _reauthenticate_account(db: Session, acc_id: int, credential: str,
+                          profile: dict, balance: dict) -> Account:
+    acc = db.query(Account).filter(Account.id == acc_id).with_for_update().first()
+    if acc is None:
+        raise HTTPException(404, "原账号不存在，请刷新列表")
+    old_uid = str(acc.uid or _uid_of(acc.auth_json) or "")
+    new_uid = str(profile.get("uid") or _uid_of(credential) or "")
+    if not old_uid or not new_uid or old_uid != new_uid:
+        raise HTTPException(409, "登录身份与原账号不一致，未替换凭证；请使用原账号重新登录")
+    _apply_meta(acc, credential, profile=profile, balance=balance)
+    acc.status = "active"
+    acc.session_dead_fails = 0
+    acc.consecutive_fails = 0
+    acc.breaker_fails = 0
+    acc.breaker_until = None
+    acc.degrade_until = None
+    # Logging in does not restore upstream quota or remove model daily limits.
+    if acc.cool_kind in ("session_dead", "transport", "upstream_5xx"):
+        acc.cool_kind = ""
+        acc.cool_until = None
+    acc.last_err_msg = ""
+    acc.last_err_at = None
+    acc.last_upstream_error = ""
+    return acc
+
+
+@router.post("/{acc_id}/reauth")
+def reauthenticate_account(acc_id: int, body: AccountIn,
+                           _: bool = Depends(require_admin), db: Session = Depends(get_db)):
+    credential = _decode_or_400(body.auth_json)
+    _reject_non_credential(credential)
+    profile, balance = _verify_credential_live_or_400(credential)
+    acc = _reauthenticate_account(db, acc_id, credential, profile, balance)
+    db.commit()
+    return {"ok": True, "id": acc.id, "message": "凭证已更新，原账号 ID、排序、Key 绑定及历史记录已保留"}
 
 
 @router.post("/batch")
@@ -700,8 +791,8 @@ def batch_add(body: AccountBatchIn, _: bool = Depends(require_admin), db: Sessio
         if uid and uid in seen:
             # 已存在 -> 覆盖新凭证并刷新余额（与单条上传同口径）
             old = seen[uid]
-            old.auth_json = it.auth_json
-            _apply_meta(old, it.auth_json, profile=profile, balance=balance)
+            _apply_meta(old, it.auth_json, profile=profile if body.verify else None,
+                        balance=balance if body.verify else None)
             db.commit()
             _post_login_automation(old.id, old.name or old.uid)
             skipped += 1
@@ -714,7 +805,7 @@ def batch_add(body: AccountBatchIn, _: bool = Depends(require_admin), db: Sessio
         if uid:
             seen[uid] = acc
         _post_login_automation(acc.id, acc.name or acc.uid)
-        if _refresh_balance(acc):
+        if _refresh_balance(acc, with_expiry=True):
             added += 1
         else:
             # 走到这里说明上游验证已过（或未开启），余额刷新失败通常是
@@ -897,7 +988,7 @@ def import_local(body: ImportLocalIn, _: bool = Depends(require_admin), db: Sess
         db.refresh(acc)
         if uid:
             seen[uid] = acc
-        if _refresh_balance(acc):
+        if _refresh_balance(acc, with_expiry=True):
             added += 1
         else:
             errors.append(f"账号 {acc.id}({acc.name}) 余额刷新失败（稍后可手动刷新）")
@@ -908,13 +999,13 @@ def import_local(body: ImportLocalIn, _: bool = Depends(require_admin), db: Sess
 @router.get("/{acc_id}/export")
 def export_one_account(
     acc_id: int,
+    response: Response,
+    format: Literal['backup', 'client'] = 'backup',
     _: bool = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """导出单个账号的登录态（.info 原文）。
-
-    与批量导出格式一致，可直接用「批量上传」导回。
-    """
+    """Export a single backup or official encrypted .info file."""
+    response.headers['Cache-Control'] = 'no-store'
     acc = db.query(Account).filter(Account.id == acc_id).first()
     if not acc:
         raise HTTPException(status_code=404, detail="账号不存在")
@@ -929,7 +1020,8 @@ def export_one_account(
         "id": acc.id,
         "name": acc.name,
         "uid": acc.uid,
-        "item": raw,
+        "format": format,
+        "item": _client_export(raw) if format == 'client' else raw,
     }
 
 
@@ -941,6 +1033,7 @@ def inject_to_client(acc_id: int, body: InjectIn, _: bool = Depends(require_admi
         raise HTTPException(status_code=404, detail="账号不存在")
     if not body.confirm:
         raise HTTPException(status_code=400, detail="需要 confirm=true 才执行注入")
+    raw = _client_export(acc.auth_json)
     d = _client_auth_dir()
     if not os.path.isdir(d):
         raise HTTPException(status_code=500, detail=f"客户端登录目录不存在: {d}")
@@ -951,8 +1044,83 @@ def inject_to_client(acc_id: int, body: InjectIn, _: bool = Depends(require_admi
         backup = target + f".bak-{ts}"
         shutil.copy2(target, backup)
     with open(target, "w", encoding="utf-8") as f:
-        f.write(acc.auth_json)
+        f.write(raw)
     return {"ok": True, "target": target, "backup": backup, "account": acc.name, "uid": acc.uid}
+
+
+def _run_refresh_batch(ids, job):
+    from admin import maintenance
+    from admin.growth_center import identity
+    from admin.growth_plan import _Lease
+    from admin.scheduler import _account_label
+    detail, seen = [], set()
+    with SessionLocal() as db:
+        job.set_phase('刷新账号余额与到期快照')
+        for account_id in ids:
+            account = db.get(Account, account_id)
+            item = {'account_id':account_id, 'account':_account_label(account) if account else str(account_id),
+                    'ok':False, 'status':'error', 'reason':'账号不存在'}
+            job.beat(item['account'])
+            if account:
+                uid = identity(account)
+                with maintenance.account_slot(account, db) as blocked:
+                    lease = _Lease(db, 'account_refresh:' + uid + ':lease')
+                    if blocked or uid in seen:
+                        item.update(status='skipped', skip_reason=blocked or 'duplicate',
+                                    reason=maintenance.skip_reason_text(blocked) if blocked
+                                    else '同一账号在本轮里重复出现，已跳过')
+                    elif not lease.acquire():
+                        item.update(status='skipped', reason='账号正在刷新，已跳过重复执行')
+                    else:
+                        seen.add(uid)
+                        original = account.auth_json
+                        try:
+                            with backend.AccountSession(original) as session:
+                                try:
+                                    balance = session.fetch_balance()
+                                    account.balance_total = int(balance.get('total') or 0)
+                                    account.balance_remain = int(balance.get('remain') or 0)
+                                    account.last_sync_at = datetime.utcnow()
+                                    summary = _sync_credit_snapshot(account, session.fetch_credit_details())
+                                    complete = (summary.get('collection') or {}).get('complete', True)
+                                    item.update(ok=complete is True, status='refreshed' if complete else 'error',
+                                                reason='余额与到期快照已刷新' if complete else '余额已刷新，账单来源不完整，保留旧到期快照')
+                                finally:
+                                    db.query(Account).filter(Account.id == account_id, Account.auth_json == original).update(
+                                        {Account.auth_json:session.updated_json()}, synchronize_session=False)
+                                    db.commit()
+                        except Exception as error:
+                            db.rollback()
+                            evidence = _remember_upstream_error(account, error)
+                            db.commit()
+                            item.update(reason=f"本网关：刷新失败；上游 HTTP={evidence['http_status'] or '未记录'} / code={evidence['code'] or '未返回'}；原文：{evidence['raw']}",
+                                        upstream_error=evidence)
+                        finally:
+                            try:
+                                lease.release()
+                            except Exception:
+                                db.rollback()
+            detail.append(item)
+            job.add_item(item)
+    refreshed = sum(item['status'] == 'refreshed' for item in detail)
+    failed = sum(item['status'] == 'error' for item in detail)
+    skipped = sum(item['status'] == 'skipped' for item in detail)
+    return {'ok':failed == 0, 'total':len(detail), 'refreshed':refreshed, 'failed':failed,
+            'skipped':skipped, 'detail':detail,
+            'summary':f'刷新完成：共 {len(detail)} 个账号，成功 {refreshed} 个，失败 {failed} 个，跳过 {skipped} 个'}
+
+
+@router.post('/refresh-batch')
+def refresh_batch(_: bool = Depends(require_admin), db: Session = Depends(get_db)):
+    key = 'account-refresh'
+    running = jobrunner.RUNNER.get(key)
+    if running and running.status == 'running':
+        return {'reused':True, **running.snapshot()}
+    ids = [account.id for account in db.query(Account).order_by(Account.id).all()]
+    if not ids:
+        raise HTTPException(400, '没有可刷新的账号')
+    job = jobrunner.RUNNER.start(key, len(ids), lambda job:_run_refresh_batch(ids, job), title='刷新全部账号')
+    return job.snapshot()
 
 
 @router.post("/{acc_id}/refresh")
@@ -968,14 +1136,19 @@ def refresh_account(acc_id: int, with_expiry: bool = True,
     acc = db.query(Account).filter(Account.id == acc_id).first()
     if not acc:
         raise HTTPException(status_code=404, detail="账号不存在")
-    ok = _refresh_balance(acc, with_expiry=with_expiry)
+    errors = []
+    ok = _refresh_balance(acc, with_expiry=with_expiry, on_error=errors.append)
     db.commit()
     if not ok:
-        raise HTTPException(status_code=502, detail="刷新失败：后端调用异常（凭据/限流）")
+        raise HTTPException(status_code=502, detail={
+            'message': '本网关：账号余额刷新失败，具体原因见上游原文',
+            'upstream': upstream_errors.stored_info(acc.last_upstream_error, acc.last_err_msg)})
     return {
         "id": acc.id,
         "balance_total": acc.balance_total,
         "balance_remain": acc.balance_remain,
+        "warnings": [upstream_errors.error_info(getattr(error, 'raw_body', str(error)),
+                                                getattr(error, 'http_status', 0)) for error in errors],
         **_credit_fields(acc),
     }
 
@@ -1260,7 +1433,7 @@ def cat_travel(acc_id: int, _: bool = Depends(require_admin), db: Session = Depe
         raise HTTPException(status_code=502, detail=f"猫猫旅行执行失败: {e}")
     # 领取到积分后顺带刷新余额，让前端列表立即反映最新值
     if result.get("credits"):
-        _refresh_balance(acc)
+        _refresh_balance(acc, with_expiry=True)
         db.commit()
     return {
         "id": acc.id,
@@ -1328,7 +1501,7 @@ def cat_travel_batch_async(
                     continue
 
                 if res.get("credits"):
-                    _refresh_balance(acc)
+                    _refresh_balance(acc, with_expiry=True)
                     db.commit()
                 outcome = res.get("outcome") or ("error" if not res.get("ok") else "travel_none")
                 if outcome == "adopted":
@@ -1395,7 +1568,7 @@ def cat_travel_batch(
             continue
         if res.get("credits"):
             total_credits += res["credits"]
-            _refresh_balance(acc)
+            _refresh_balance(acc, with_expiry=True)
             db.commit()
 
         outcome = res.get("outcome") or ("error" if not res.get("ok") else "travel_none")
@@ -1435,10 +1608,20 @@ def patch_account(
     acc = db.query(Account).filter(Account.id == acc_id).first()
     if not acc:
         raise HTTPException(status_code=404, detail="账号不存在")
+    if "max_in_flight" in body:
+        value = body["max_in_flight"]
+        if value is None or value == "":
+            acc.max_in_flight = None
+        elif type(value) is int and 0 <= value <= 2147483647:
+            acc.max_in_flight = value
+        else:
+            raise HTTPException(400, "并发上限必须是非负整数；留空跟随全局，0 表示不限")
     if "name" in body:
         acc.name = body["name"]
     if "status" in body and body["status"] in ("active", "disabled"):
         acc.status = body["status"]
+        if acc.status == 'disabled' and acc.cool_kind == 'session_dead':
+            acc.cool_kind = 'manual_disabled'
     db.commit()
     return {"id": acc.id, "ok": True}
 

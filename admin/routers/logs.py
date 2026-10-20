@@ -33,23 +33,279 @@
     深翻页不再是 `OFFSET 100000`（那是 O(offset) 的扫描）。
     仍保留 page/page_size 兼容既有前端。
 """
+import asyncio
 import csv
 import io
-from datetime import datetime, timedelta
+import json
+import secrets
+import threading
+import time
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Response
-from sqlalchemy import func, or_
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, Request, Response, HTTPException
+from fastapi.responses import StreamingResponse
+from sqlalchemy import func, or_, case
+from sqlalchemy.orm import Session, defer
+from starlette.concurrency import run_in_threadpool
 
 from admin.db import get_db
-from admin.models import Account, ApiKey, UsageLog
-from admin.security import require_admin
+from admin.models import Account, ApiKey, UsageLog, RequestAudit
+from admin.security import require_admin, verify_admin_token
 
 router = APIRouter(prefix="/api/logs", tags=["logs"])
 
 #: 单页上限：防止 `page_size=1000000` 把整张表拉进内存（既是性能问题也是 DoS 面）。
 MAX_PAGE_SIZE = 500
+
+
+def _activity_probe(db: Session, key: Optional[str], limit: int,
+                    include_history: bool = True) -> dict:
+    """采集「请求动态」的一帧（HTTP 轮询与 SSE 推送共用同一份）。
+
+    抽成函数是为了让两条通道**口径完全一致**：前端同一套渲染代码吃两种来源，
+    如果各写一份查询，「手动刷新拿到的」和「自动刷新拿到的」迟早会漂移。
+    """
+    from admin import request_metrics
+    from admin.request_audit import INFERENCE_PATHS
+    # Primary-key lookup: a long request completing after newer requests still
+    # advances this cursor. No COUNT or diagnostic payload is needed per tick.
+    latest = db.query(UsageLog.id).order_by(UsageLog.id.desc()).first()
+    usage_revision = latest[0] if latest else 0
+    if not include_history:
+        return {'usage_revision': usage_revision}
+    limit = max(1, min(100, limit))
+    ids = set(_resolve_ids_by_name(db, ApiKey, key, ('name',))) if key else None
+    snapshot = request_metrics.activity_snapshot(INFERENCE_PATHS, ids)
+    def visible(record):
+        return (record.get('key_id') and record.get('path') in INFERENCE_PATHS
+                and (ids is None or record['key_id'] in ids))
+    def live(record):
+        return {'request_id': record['id'], 'key_id': record['key_id'],
+                'path': record['path'], 'model': record.get('requested_model', ''),
+                'started_at': record['started_at'], 'status': record.get('status'),
+                'outcome': record['outcome'], 'elapsed_ms': record['elapsed_ms'],
+                'phase': record.get('phase', ''),
+                'reason': record.get('request_error') or record.get('network_error') or record.get('upstream_error') or '',
+                'upstream_attempts': record.get('upstream_attempts') or 0}
+    active = [live(r) for r in snapshot['active'] if visible(r)]
+    query = db.query(RequestAudit)
+    if ids is not None:
+        query = query.filter(RequestAudit.api_key_id.in_(ids))
+    rows = query.order_by(RequestAudit.started_at.desc(), RequestAudit.id.desc()).limit(limit).all()
+    completed = {r.request_id: {'request_id': r.request_id, 'key_id': r.api_key_id,
+                 'path': r.path, 'model': r.model, 'started_at': r.started_at.isoformat()+'Z',
+                 'status': r.status, 'outcome': r.outcome, 'elapsed_ms': r.elapsed_ms,
+                 'phase': r.phase, 'reason': r.reason, 'upstream_attempts': r.upstream_attempts}
+                 for r in rows}
+    # Cover the short interval between finishing a response and its audit write.
+    for record in snapshot['recent']:
+        if visible(record):
+            completed.setdefault(record['id'], live(record))
+    finished = sorted(completed.values(), key=lambda r: r['started_at'], reverse=True)[:limit]
+    key_names, _ = _name_maps(db, {r['key_id'] for r in active + finished}, set())
+    for row in active + finished:
+        row['key_name'] = key_names[row['key_id']]
+    return {'active': active[:100], 'active_count': snapshot['active_count'], 'recent': finished,
+            'usage_revision': usage_revision,
+            'active_scope': 'process', 'history_persistent': True}
+
+
+@router.get('/requests')
+def request_activity(key: Optional[str] = None, limit: int = 40, include_history: bool = True,
+                     _: bool = Depends(require_admin), db: Session = Depends(get_db)):
+    """Show in-flight inference and outcomes that need not have billable usage."""
+    return _activity_probe(db, key, limit, include_history)
+
+
+# ---------------------------------------------------------------------------
+# 「请求动态」推送通道（SSE）—— 替代原来的「每 3 秒轮询」
+# ---------------------------------------------------------------------------
+# 换掉轮询的理由：一个开着日志面板的标签页每小时要发 1200 次请求，每次都走
+# 完鉴权 → 线程池 → SQL 采样 → JSON 序列化，而绝大多数时候结果根本没变。
+# 它不会堵死 /v1/chat（那边是独立的 async 流式端点），但会持续占用线程池与
+# 数据库连接的份额，放大抖动；开三四个标签页就是几千次/小时。
+#
+# 为什么不用 WebSocket：这里是单向、事件型、有明确生命周期的数据，SSE 足够；
+# WebSocket 需要 uvicorn 装 ws 库、反向代理显式转发 Upgrade/Connection，
+# 漏一条线上就是「连不上」；SSE 就是普通 HTTP GET，代理不用改配置。
+#
+# 成本：一条长连接，**没变化就只发一行心跳**；折叠卡片/离开面板时浏览器
+# abort，服务端立刻停采样。
+_ACTIVITY_STREAM_HEARTBEAT = 15.0       # 秒：无变化时的心跳间隔
+_ACTIVITY_STREAM_TICK = 0.5             # 秒：内存指纹比较间隔（无 SQL）
+_ACTIVITY_STREAM_REFRESH = 10.0         # 秒：即使内存没变，也重新对一次库
+_ACTIVITY_STREAM_MAX_SECONDS = 30 * 60  # 单连接上限，到点让前端换票重连
+_STREAM_TICKET_TTL = 120.0              # 推送票据有效期（秒）
+_STREAM_TICKET_LIMIT = 256              # 票据总量上限（纯内存结构，必须有界）
+_ACTIVITY_STREAM_LIMIT = 16             # 同时最长连接数
+_activity_stream = {'now': 0}
+
+_stream_tickets: dict[str, float] = {}
+_stream_tickets_lock = threading.Lock()
+
+
+def issue_stream_ticket(now: float | None = None) -> dict:
+    """签发一张推送票据（调用方必须已通过管理员鉴权）。
+
+    EventSource 不能带自定义请求头，而**管理员 JWT 绝不能进 URL** ——
+    URL 会进 uvicorn/nginx 访问日志、浏览器历史与 Referer，那等于长期凭据泄漏。
+    所以前端先用请求头换一张 2 分钟有效、只能读这条推送的票据。
+    """
+    now = now if now is not None else time.time()
+    token = secrets.token_urlsafe(24)
+    with _stream_tickets_lock:
+        for key, expiry in list(_stream_tickets.items()):
+            if expiry <= now:
+                _stream_tickets.pop(key, None)
+        while len(_stream_tickets) >= _STREAM_TICKET_LIMIT:
+            _stream_tickets.pop(next(iter(_stream_tickets)), None)
+        _stream_tickets[token] = now + _STREAM_TICKET_TTL
+    return {'ticket': token, 'expires_in': int(_STREAM_TICKET_TTL)}
+
+
+def stream_ticket_valid(token: str | None, now: float | None = None) -> bool:
+    """票据是否有效（**不消费**：浏览器自动重连时会复用同一个 URL）。"""
+    if not token:
+        return False
+    now = now if now is not None else time.time()
+    with _stream_tickets_lock:
+        expiry = _stream_tickets.get(token)
+        if expiry is None:
+            return False
+        if expiry <= now:
+            _stream_tickets.pop(token, None)
+            return False
+    return True
+
+
+def _activity_signature(payload: dict) -> str:
+    """把一帧压成「有没有变化」的短指纹，避免重复推送同一份 JSON。"""
+    parts = [str(payload.get('usage_revision'))]
+    for r in payload.get('active') or []:
+        parts.append('a%s:%s:%s:%s' % (r.get('request_id'), r.get('phase'),
+                                       int(r.get('elapsed_ms') or 0) // 1000,
+                                       r.get('status')))
+    for r in payload.get('recent') or []:
+        parts.append('r%s:%s:%s' % (r.get('request_id'), r.get('outcome'), r.get('status')))
+    return '|'.join(parts)
+
+
+def _activity_live_signature(key: Optional[str]) -> str:
+    """纯内存的「要不要查库」判定（零 SQL）。
+
+    没有它，每帧都得查一次库才知道要不要推，那比 3 秒轮询还费。
+    带 Key 名称筛选时拿不到 id 集合（那需要查库），退化为不过滤的指纹 ——
+    只会让推送略保守，真正发出去的那一帧仍走 `_activity_probe` 的严格过滤。
+    """
+    from admin import request_metrics
+    from admin.request_audit import INFERENCE_PATHS
+    return request_metrics.activity_live_signature(INFERENCE_PATHS)
+
+
+def _activity_fetch(key: Optional[str], limit: int) -> dict:
+    """线程池里跑的一帧：**独立的短会话**。
+
+    SSE 的响应体在依赖 teardown 之后才继续迭代（与 StreamingResponse 落库
+    是同一类坑），复用请求作用域的 db 会抛 ResourceClosedError，且会被
+    静默吞掉 —— 表现就是「推送忽然没了」。会话工厂运行时取，便于测试替换。
+    """
+    from admin import db as admin_db
+    db = admin_db.SessionLocal()
+    try:
+        return _activity_probe(db, key, limit)
+    finally:
+        db.close()
+
+
+@router.get('/requests/ticket')
+def request_activity_ticket(_: bool = Depends(require_admin)):
+    """用**请求头**换一张短票据，供 EventSource 拼进 URL。"""
+    return issue_stream_ticket()
+
+
+@router.get('/requests/stream')
+async def request_activity_stream(
+    request: Request,
+    key: Optional[str] = None,
+    limit: int = 40,
+    ticket: Optional[str] = None,
+):
+    """「请求动态」的服务端推送（SSE）。
+
+    帧协议：
+      * `event: activity` + `data: <json>` —— 与 `/api/logs/requests` **同构**；
+      * `: keepalive` 注释行 —— 空闲心跳，顺带防止中间代理掐连接；
+      * `event: reauth` —— 连接到点收尾前发出，前端据此换票重连。
+
+    鉴权：优先 `X-Admin-Token` 头，其次 `?ticket=`。**不接受 URL 里的 JWT**。
+    """
+    header_token = request.headers.get('x-admin-token')
+    if header_token:
+        verify_admin_token(header_token)
+    elif not stream_ticket_valid(ticket):
+        raise HTTPException(status_code=401, detail='推送票据无效或已过期')
+    limit = max(1, min(100, int(limit or 40)))
+
+    async def frames():
+        # 连接上限与计数都放在生成器里，不放 handler：
+        #   * 超出上限时立刻结束、不发帧，让前端马上退到低频轮询；
+        #   * 客户端在响应开始前断开时生成器可能一次都不被迭代 ——
+        #     在 handler 里加一就永远减不回来，计数「只增不减」，
+        #     几次刷新后就把自己锁死在上限上。
+        if _activity_stream['now'] >= _ACTIVITY_STREAM_LIMIT:
+            return
+        _activity_stream['now'] += 1
+        started = time.monotonic()
+        last_mem = None      # 上次查库时的内存指纹
+        last_pushed = None   # 上次真正推出去的内容指纹
+        last_sent = 0.0
+        last_db = 0.0
+        last_check = 0.0
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                now = time.monotonic()
+                if now - started > _ACTIVITY_STREAM_MAX_SECONDS:
+                    # 收尾前让前端换票重连：EventSource 自动重连会复用旧 URL，
+                    # 而那张票据早已过期，必然 401。
+                    yield 'event: reauth\ndata: {}\n\n'
+                    break
+                # 两级节流：每 0.5s 只看内存指纹（无 SQL）；只有真的多/少了一条
+                # 请求、或阶段变了，或距上次对库超过 10s，才去查库。
+                if now - last_check >= _ACTIVITY_STREAM_TICK:
+                    last_check = now
+                    live = _activity_live_signature(key)
+                    if live != last_mem or now - last_db >= _ACTIVITY_STREAM_REFRESH:
+                        last_mem = live
+                        last_db = now
+                        try:
+                            payload = await run_in_threadpool(_activity_fetch, key, limit)
+                        except Exception:
+                            # 数据库短暂不可用不该让面板永远空白：发一帧空结果。
+                            payload = {'active': [], 'active_count': 0, 'recent': [],
+                                       'usage_revision': None, 'degraded': True}
+                        pushed = _activity_signature(payload)
+                        if pushed != last_pushed:
+                            last_pushed = pushed
+                            last_sent = now
+                            payload['mode'] = 'stream'
+                            yield 'event: activity\ndata: ' + json.dumps(
+                                payload, ensure_ascii=False, separators=(',', ':')) + '\n\n'
+                if now - last_sent >= _ACTIVITY_STREAM_HEARTBEAT:
+                    last_sent = now
+                    yield ': keepalive\n\n'
+                await asyncio.sleep(_ACTIVITY_STREAM_TICK)
+        finally:
+            _activity_stream['now'] = max(0, _activity_stream['now'] - 1)
+
+    return StreamingResponse(frames(), media_type='text/event-stream', headers={
+        'Cache-Control': 'no-store',
+        # 关掉 nginx 响应缓冲，否则推送会被攒着一起发，等于把 SSE 变回批量。
+        'X-Accel-Buffering': 'no',
+        'Connection': 'keep-alive',
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +341,9 @@ def _name_maps(db: Session, key_ids: set[int], acc_ids: set[int]) -> tuple[dict,
     acc_names: dict[int, str] = {}
     if key_ids:
         for k in db.query(ApiKey.id, ApiKey.name).filter(ApiKey.id.in_(key_ids)).all():
-            key_names[k[0]] = k[1] or ""
+            key_names[k[0]] = k[1] or f"未命名 Key #{k[0]}"
+        for key_id in key_ids - key_names.keys():
+            key_names[key_id] = f"已删除 Key #{key_id}"
     if acc_ids:
         for a in db.query(Account.id, Account.name, Account.uid).filter(
                 Account.id.in_(acc_ids)).all():
@@ -94,7 +352,7 @@ def _name_maps(db: Session, key_ids: set[int], acc_ids: set[int]) -> tuple[dict,
 
 
 def _build_filters(q, *, key_id, account_ids, models, model, key, account,
-                   client_ip, start, end, db: Session):
+                   client_ip, start, end, db: Session, result=None):
     """构造统一的 where 条件（列表与导出共用，保证口径一致）。
 
     返回 `(query, short_circuit)`：`short_circuit=True` 表示「筛选条件不可能
@@ -131,10 +389,25 @@ def _build_filters(q, *, key_id, account_ids, models, model, key, account,
         q = q.filter(UsageLog.account_id.in_(aids))
     if client_ip:
         q = q.filter(UsageLog.client_ip.like(f"%{client_ip}%"))
+    def timestamp(value):
+        if not isinstance(value, str):
+            return value
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return parsed.astimezone(timezone.utc).replace(tzinfo=None) if parsed.tzinfo else parsed
+        except ValueError:
+            raise HTTPException(400, "日志时间格式无效") from None
     if start:
+        start = timestamp(start)
         q = q.filter(UsageLog.created_at >= start)
     if end:
+        end = timestamp(end)
         q = q.filter(UsageLog.created_at <= end)
+    success = func.coalesce(UsageLog.error_kind, "").in_(("", "success"))
+    if result == "error":
+        q = q.filter(~success)
+    elif result == "success":
+        q = q.filter(success)
     return q, False
 
 
@@ -143,7 +416,7 @@ def _serialize(rows, key_names: dict, acc_names: dict) -> list[dict]:
         {
             "id": r.id,
             "key_name": key_names.get(r.api_key_id) or f"#{r.api_key_id}",
-            "account_name": acc_names.get(r.account_id) or f"#{r.account_id}",
+            "account_name": acc_names.get(r.account_id) or (f"#{r.account_id}" if r.account_id else "未记录账号 / 未选号"),
             "model": r.model,
             "credits": r.credits,
             "prompt_tokens": r.prompt_tokens,
@@ -176,6 +449,7 @@ def list_logs(
     start: Optional[str] = None,  # 起始时间 YYYY-MM-DD HH:MM:SS
     end: Optional[str] = None,
     before_id: Optional[int] = None,  # keyset 分页游标（深翻页用，比 OFFSET 快）
+    result: Optional[str] = None,
     with_total: bool = True,          # 深翻页时可关掉总数统计省一次扫描
     _: bool = Depends(require_admin),
     db: Session = Depends(get_db),
@@ -201,19 +475,23 @@ def list_logs(
     name_term = account if not account_id else None
 
     q, short = _build_filters(
-        db.query(UsageLog),
+        db.query(UsageLog).options(defer(UsageLog.diagnostic_json)),
         key_id=key_id, account_ids=account_ids, models=None, model=model,
         key=key, account=name_term,
-        client_ip=client_ip, start=start, end=end, db=db,
+        client_ip=client_ip, start=start, end=end, db=db, result=result,
     )
 
     if short:
         return {"items": [], "total": 0, "page": page,
+                "stats": {"total": 0, "success": 0, "error": 0} if with_total and before_id is None else None,
                 "page_size": page_size, "has_more": False, "next_before_id": None}
 
     total = None
+    stats = None
     if with_total and before_id is None:
-        total = q.count()
+        total, successes = q.with_entities(func.count(UsageLog.id), func.coalesce(func.sum(case(
+            (func.coalesce(UsageLog.error_kind, "").in_(("", "success")), 1), else_=0)), 0)).one()
+        stats = {"total": total, "success": int(successes), "error": total - int(successes)}
 
     # keyset 分页优先；否则退回 OFFSET
     if before_id is not None:
@@ -235,6 +513,7 @@ def list_logs(
     return {
         "items": _serialize(rows, key_names, acc_names),
         "total": total,                     # None = 本次未统计
+        "stats": stats,
         "page": page,
         "page_size": page_size,
         "has_more": has_more,
@@ -254,6 +533,8 @@ def export_logs(
     start: Optional[str] = None,
     end: Optional[str] = None,
     limit: int = 50000,
+    result: Optional[str] = None,
+    diagnostics: bool = False,
     _: bool = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -264,22 +545,24 @@ def export_logs(
     默认 5 万行，配合时间范围筛选足够覆盖正常对账需求。
     """
     limit = max(1, min(200000, int(limit or 50000)))
+    if diagnostics:
+        limit = min(limit, 1000)
 
     account_ids = [account_id] if account_id else None
     name_term = account if not account_id else None
 
     q, short = _build_filters(
-        db.query(UsageLog),
+        db.query(UsageLog) if diagnostics else db.query(UsageLog).options(defer(UsageLog.diagnostic_json)),
         key_id=key_id, account_ids=account_ids, models=None, model=model,
         key=key, account=name_term,
-        client_ip=client_ip, start=start, end=end, db=db,
+        client_ip=client_ip, start=start, end=end, db=db, result=result,
     )
 
     buf = io.StringIO()
     buf.write("\ufeff")  # UTF-8 BOM，保证 Excel 正确识别中文
     w = csv.writer(buf)
     w.writerow(["ID", "Key", "账号", "模型", "积分", "提示tokens", "补全tokens", "缓存tokens", "总tokens",
-                "TTFB(ms)", "总耗时(ms)", "结果", "客户端IP", "用途", "思考强度(请求)", "时间(北京)"])
+                "TTFB(ms)", "总耗时(ms)", "结果", "客户端IP", "用途", "思考强度(请求)", "时间(北京)"] + (["诊断JSON（含上游响应及本地错误）"] if diagnostics else []))
 
     if not short:
         rows = q.order_by(UsageLog.id.desc()).limit(limit).all()
@@ -297,7 +580,7 @@ def export_logs(
             w.writerow([
                 r.id,
                 key_names.get(r.api_key_id) or f"#{r.api_key_id}",
-                acc_names.get(r.account_id) or f"#{r.account_id}",
+                acc_names.get(r.account_id) or (f"#{r.account_id}" if r.account_id else "未记录账号 / 未选号"),
                 r.model,
                 r.credits,
                 r.prompt_tokens if r.prompt_tokens is not None else "",
@@ -311,7 +594,7 @@ def export_logs(
                 r.use_case or "",
                 r.reasoning_effort or "",
                 t_str,
-            ])
+            ] + ([r.diagnostic_json or ""] if diagnostics else []))
     return Response(
         content=buf.getvalue(),
         media_type="text/csv",
@@ -379,80 +662,62 @@ def log_accounts(
 
 @router.get("/summary")
 def log_summary(
-    days: int = 1,
-    account_id: Optional[int] = None,
-    key_id: Optional[int] = None,
-    model: Optional[str] = None,
-    _: bool = Depends(require_admin),
-    db: Session = Depends(get_db),
+    days: int = 1, account_id: Optional[int] = None,
+    key_id: Optional[int] = None, model: Optional[str] = None,
+    key: Optional[str] = None, account: Optional[str] = None,
+    client_ip: Optional[str] = None, start: Optional[str] = None,
+    end: Optional[str] = None, result: Optional[str] = None,
+    _: bool = Depends(require_admin), db: Session = Depends(get_db),
 ):
-    """**按账号**的用量汇总（与列表共用同一套筛选口径）。
-
-    这是「按账号查询使用记录」的答案：与其让用户翻几十页日志去数，
-    不如直接给他每个号的请求数 / 积分 / token / 成功率 / 平均耗时。
-    统计全部在 SQL 侧聚合，不把明细拉到 Python。
-    """
-    since = datetime.utcnow() - timedelta(days=max(1, days))
-
+    success = func.coalesce(UsageLog.error_kind, "").in_(("", "success"))
     q = db.query(
-        UsageLog.account_id,
-        func.count(UsageLog.id),
+        UsageLog.account_id, func.count(UsageLog.id),
         func.coalesce(func.sum(UsageLog.credits), 0.0),
         func.coalesce(func.sum(UsageLog.total_tokens), 0),
         func.coalesce(func.sum(UsageLog.prompt_tokens), 0),
         func.coalesce(func.sum(UsageLog.completion_tokens), 0),
         func.coalesce(func.sum(UsageLog.cached_tokens), 0),
-        func.avg(UsageLog.latency_ms),
-        func.max(UsageLog.created_at),
-    ).filter(UsageLog.created_at >= since)
-    if account_id is not None:
-        q = q.filter(UsageLog.account_id == account_id)
-    if key_id is not None:
-        q = q.filter(UsageLog.api_key_id == key_id)
-    if model:
-        q = q.filter(UsageLog.model == model)
-
-    rows = (q.group_by(UsageLog.account_id)
-            .order_by(func.coalesce(func.sum(UsageLog.credits), 0.0).desc())
-            .all())
-
-    # 失败数单独算一次：`error_kind` 的「成功」判定是「空串或 success」，
-    # 用条件聚合表达更清晰，也避免在 MySQL 上踩 func.if_ 的方言问题。
-    fail_rows = dict(
-        db.query(UsageLog.account_id, func.count(UsageLog.id))
-        .filter(UsageLog.created_at >= since,
-                ~UsageLog.error_kind.in_(("", "success")))
-        .group_by(UsageLog.account_id).all())
-
-    ids = [r[0] for r in rows]
-    names: dict[int, str] = {}
-    if ids:
-        for a in db.query(Account.id, Account.name, Account.uid).filter(
-                Account.id.in_(ids)).all():
-            names[a[0]] = a[1] or a[2] or f"#{a[0]}"
-
+        func.avg(UsageLog.latency_ms), func.max(UsageLog.created_at),
+        func.coalesce(func.sum(case((success, 0), else_=1)), 0),
+    )
+    if not start and days > 0:
+        start = datetime.utcnow() - timedelta(days=days)
+    q, short = _build_filters(q, key_id=key_id,
+        account_ids=[account_id] if account_id is not None else None,
+        models=None, model=model, key=key, account=account,
+        client_ip=client_ip, start=start, end=end, db=db, result=result)
+    rows = [] if short else q.group_by(UsageLog.account_id).order_by(
+        func.coalesce(func.sum(UsageLog.credits), 0.0).desc()).all()
+    _, names = _name_maps(db, set(), {r[0] for r in rows if r[0]})
     items = []
-    for (aid, reqs, credits_used, ttok, ptok, ctok, cached,
-         avg_lat, last) in rows:
-        fails = int(fail_rows.get(aid) or 0)
+    for aid, reqs, credits, ttok, ptok, ctok, cached, avg_lat, last, fails in rows:
         items.append({
             "account_id": aid,
-            "account_name": names.get(aid) or f"#{aid}",
-            "requests": int(reqs or 0),
-            "failed_requests": fails,
-            "ok_requests": max(0, int(reqs or 0) - fails),
-            "credits": round(float(credits_used or 0), 4),
-            "total_tokens": int(ttok or 0),
-            "prompt_tokens": int(ptok or 0),
-            "completion_tokens": int(ctok or 0),
-            "cached_tokens": int(cached or 0),
-            "avg_latency_ms": int(avg_lat) if avg_lat else 0,
+            "account_name": names.get(aid) or (f"#{aid}" if aid else "未记录账号 / 未选号"),
+            "requests": int(reqs), "failed_requests": int(fails),
+            "ok_requests": int(reqs - fails), "credits": round(float(credits), 4),
+            "total_tokens": int(ttok), "prompt_tokens": int(ptok),
+            "completion_tokens": int(ctok), "cached_tokens": int(cached),
+            "avg_latency_ms": int(avg_lat or 0),
             "last_used_at": last.isoformat() if last else None,
         })
+    return {"range_days": days, "total_requests": sum(i["requests"] for i in items),
+            "ok_requests": sum(i["ok_requests"] for i in items),
+            "failed_requests": sum(i["failed_requests"] for i in items),
+            "account_count": sum(1 for i in items if i["account_id"]),
+            "unattributed_requests": sum(i["requests"] for i in items if not i["account_id"]),
+            "total_credits": round(sum(i["credits"] for i in items), 4), "items": items}
 
-    return {
-        "range_days": days,
-        "total_requests": sum(i["requests"] for i in items),
-        "total_credits": round(sum(i["credits"] for i in items), 4),
-        "items": items,
-    }
+
+@router.get("/{log_id}")
+def log_detail(log_id: int, db: Session = Depends(get_db), _=Depends(require_admin)):
+    row = db.query(UsageLog).filter(UsageLog.id == log_id).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="使用记录不存在")
+    keys, accounts = _name_maps(db, {row.api_key_id}, {row.account_id})
+    item = _serialize([row], keys, accounts)[0]
+    try:
+        item["diagnostic"] = json.loads(row.diagnostic_json) if row.diagnostic_json else None
+    except (TypeError, ValueError):
+        item["diagnostic"] = None
+    return item

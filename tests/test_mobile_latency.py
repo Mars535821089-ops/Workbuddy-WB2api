@@ -9,6 +9,7 @@ import threading
 from types import SimpleNamespace
 import time
 import unittest
+from admin.request_scheduling import SweepBudget
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -428,6 +429,7 @@ class MobileLatencyTests(unittest.IsolatedAsyncioTestCase):
         pool.acquire.return_value = True
         log = MagicMock(return_value=1)
         replacements = {'get_key_row': MagicMock(return_value=SimpleNamespace(id=1)),
+                        'pool_budget': MagicMock(return_value=SweepBudget(1, 1)),
                         'check_quota': MagicMock(), '_key_group_models': MagicMock(return_value=None),
                         '_pick_best_model': slow_selection, 'SessionLocal': MagicMock(),
                         '_select_account': MagicMock(return_value=SimpleNamespace(id=1, uid='offline')),
@@ -440,8 +442,11 @@ class MobileLatencyTests(unittest.IsolatedAsyncioTestCase):
             started = time.perf_counter()
             response = await proxy.chat_completions(request, MagicMock(), 'test', None)
             first_ms = None
-            async for chunk in response.body_iterator:
+            from tests import collect_response
+            def observe(chunk):
+                nonlocal first_ms
                 first_ms = first_ms or (time.perf_counter()-started)*1000
+            await collect_response(response, observe)
             measured = log.call_args.args[0]
             self.assertGreaterEqual(measured, 95)
             self.assertLess(abs(measured-first_ms), 20)

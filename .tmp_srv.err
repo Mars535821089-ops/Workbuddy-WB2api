@@ -1,0 +1,11 @@
+2026-10-20 15:37:33 INFO [admin.server] /gw 已挂载（已配置 CONVERTER_API_KEY，/v1/* 强制校验）
+2026-10-20 15:37:33 INFO [admin.wb_login] wb_login: 会话回收线程已启动（每 60s 一次，TTL=900s，上限=500）
+2026-10-20 15:37:34 INFO [admin.server] Turing 设备指纹预热成功（X-Device-Token 就绪）
+2026-10-20 15:37:35 INFO [admin.server] 号池运行态已装配：单号在途上限=3 会话粘性=开(ttl=1800s) 轮转上限=6
+2026-10-20 15:37:35 INFO [admin.server] 已应用后台路径设置：{'install_dir': 'D:\\WorkBuddy'}
+2026-10-20 15:37:35 INFO [admin.server] 客户端版本：安装目录=D:\WorkBuddy | 桌面端=5.8.3(install-manifest.json) | CLI=2.161.0(cli/package.json) | turingChannel=109144(cli/product.json)
+2026-10-20 15:37:35 INFO [admin.server] 逆向产物目录：C:\Users\Administrator\AppData\Local\workbuddy2api\app_source（开发工具已开启，可在后台一键拆包）
+E:\反代理\workbuddy2api\.venv\Lib\site-packages\jwt\api_jwt.py:147: InsecureKeyLengthWarning: The HMAC key is 12 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+  return self._jws.encode(
+E:\反代理\workbuddy2api\.venv\Lib\site-packages\jwt\api_jwt.py:368: InsecureKeyLengthWarning: The HMAC key is 12 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+  decoded = self.decode_complete(

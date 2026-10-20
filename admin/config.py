@@ -16,23 +16,25 @@ from dotenv import load_dotenv
 # 加载项目根目录的 .env（无论运行时 CWD 在哪都能找到）。
 # 不会覆盖已经存在的系统环境变量（便于容器 / systemd 注入）。
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if os.getenv("WORKBUDDY_DESKTOP") != "1" and os.getenv("WORKBUDDY_ANDROID") != "1":
-    load_dotenv(os.path.join(_ROOT, ".env"))
+load_dotenv(os.path.join(_ROOT, ".env"))
 
 _logger = logging.getLogger(__name__)
 
 
 class Settings:
+    GATEWAY_WAIT_TIMEOUT = float(os.getenv("ADMIN_GATEWAY_WAIT_TIMEOUT", "180"))
+    GATEWAY_RATE_PER_MINUTE = int(os.getenv("ADMIN_GATEWAY_RATE_PER_MINUTE", "60"))
+    GATEWAY_MAX_CONCURRENT = int(os.getenv("ADMIN_GATEWAY_MAX_CONCURRENT", "4"))
+    GATEWAY_LIMIT_BACKEND = os.getenv("ADMIN_GATEWAY_LIMIT_BACKEND", "auto").lower()
+    MAX_TOTAL_ATTEMPTS = int(os.getenv("ADMIN_POOL_MAX_TOTAL_ATTEMPTS", "6"))
+    RETRY_WINDOW_SECONDS = float(os.getenv("ADMIN_POOL_RETRY_WINDOW", "90"))
+    MODEL_DAILY_COOLDOWN_SECONDS = int(os.getenv("ADMIN_POOL_MODEL_DAILY_COOLDOWN", "86400"))
     # 数据库 / 缓存
     DATABASE_URL = os.getenv(
         "ADMIN_DATABASE_URL",
         "mysql+pymysql://root:root@127.0.0.1:3306/workbuddy_admin?charset=utf8mb4",
     )
     REDIS_URL = os.getenv("ADMIN_REDIS_URL", "redis://127.0.0.1:6379/0")
-    # Per-key burst bounds; use 0 explicitly to disable a bound.
-    GATEWAY_RATE_PER_MINUTE = int(os.getenv("ADMIN_GATEWAY_RATE_PER_MINUTE", "60"))
-    GATEWAY_MAX_CONCURRENT = int(os.getenv("ADMIN_GATEWAY_MAX_CONCURRENT", "4"))
-    GATEWAY_LIMIT_BACKEND = os.getenv("ADMIN_GATEWAY_LIMIT_BACKEND", "auto").lower()
 
     # 后端（CodeBuddy / WorkBuddy）
     BACKEND = os.getenv("ADMIN_BACKEND", "https://copilot.tencent.com")
@@ -86,9 +88,8 @@ class Settings:
     ANTHROPIC_MODEL_SONNET = os.getenv("ADMIN_ANTHROPIC_MODEL_SONNET", "glm-5.2")
     ANTHROPIC_MODEL_HAIKU = os.getenv("ADMIN_ANTHROPIC_MODEL_HAIKU", "glm-5.3-flash")
 
-    # harness 脱敏开关（/v1/messages、/v1/chat/completions、/v1/responses
-    # 与 converter 的 /gw 端点同款处理）。
-    # system prompt / tools 是固定模板，内含 "DoS / exploit / credential"
+    # /v1/messages 的 harness 脱敏开关（与 converter 的 /gw 端点同款处理）。
+    # Claude Code 的 system prompt / tools 是固定模板，内含 "DoS / exploit / credential"
     # 这类合规声明词，会被上游内容审核误判并整条拒绝，典型报错就是
     #   400 {"code":11128,"msg":"Illegal API invocation from an unapproved channel"}
     # 开启后会压缩 harness 并给敏感词插零宽空格。默认开启 —— 关掉大概率直接发不出去。
@@ -107,21 +108,16 @@ class Settings:
     # 腾讯 CodeBuddy/WorkBuddy 后端通过 X-IDE-Name 头识别客户端，默认 "WorkBuddy"。
     UPSTREAM_CLIENT_NAME = os.getenv("ADMIN_UPSTREAM_CLIENT_NAME", "WorkBuddy")
 
-    # 账号选择策略。
-    #
-    # **所有策略都先按「积分到期紧迫度」硬分组**（7 天内到期的号一定先用完，
-    # 见 admin/pool.py 的 expiry_key / admin/routers/proxy.py 的 _select_account），
-    # 这里的取值只决定**同一紧迫度档位内部**的先后：
-    #   expiring 到期最近优先（**默认**）—— 严格「先用快过期的」
-    #   oldest   最老录入优先 —— 到期数据缺失时的次优选择
+    # 账号选择策略：
+    #   oldest   最老录入优先（**默认**）—— 先用完老账号额度，避免积分过期作废
     #   remain   剩余最多优先
     #   lru      最久未用优先
     #   weighted 三因子加权随机（余额 ×10 + 快过期 ×8 + 闲置补偿）
     #
-    # 默认从 oldest 改成 expiring：oldest 只是「老号离到期近」这个**相关代理指标**，
-    # 真正要的是「离到期近」。现在有了逐包到期快照（credits_soonest_expire_at），
-    # 可以直接用真实到期时间排序，不必再靠录入时间猜。
-    ACCOUNT_SELECT = os.getenv("ADMIN_ACCOUNT_SELECT", "expiring")
+    # 默认从 remain 改成 oldest：官方赠送积分**会过期作废**，老号离到期最近。
+    # 原来按余额最多选，会把流量持续压在新号上，老号的积分散在池子里等过期
+    # —— 用户的原话是「积分都快过期了为啥不先用」。
+    ACCOUNT_SELECT = os.getenv("ADMIN_ACCOUNT_SELECT", "oldest")
 
     # ---------- 开发 / 测试辅助工具 ----------
     #: 逆向产物（客户端源码）管理：后台一键拆包 app.asar、手动指定安装目录。
@@ -145,7 +141,7 @@ class Settings:
     STICKY_GC_SECONDS = int(os.getenv("ADMIN_SESSION_STICKY_GC", "300"))
     #: 单请求最多换号次数（原实现硬编码 3，这里可配）。
     #:
-    #: 2026-09-26 从 3 调到 6。原因：号池账号数远多于单请求能试的次数，
+    #: 2026-09-26 从 3 调到 6。原因：号池有 16 个账号，而单请求只试 3 个，
     #: 用户看到「已尝试 3 个账号」会以为号池坏了。实测那次的失败是**流静默超时**
     #: （上游 180s 没吐字节，日志里 total≈184092ms），不是限流 —— 所有账号都是
     #: 健康的（0 冷却 / 0 熔断 / 0 降权 / 0 欠费）。
@@ -155,9 +151,6 @@ class Settings:
     #: （6 × 180s = 18 分钟）。它只在「首个账号卡住、后续账号快速失败」时才有净收益。
     #: 想更激进就设 `ADMIN_POOL_MAX_ROTATE`，想保守就设回 3。
     MAX_ROTATE = int(os.getenv("ADMIN_POOL_MAX_ROTATE", "6"))
-    # Shared across all candidate models. Does not interrupt an active stream.
-    MAX_TOTAL_ATTEMPTS = int(os.getenv("ADMIN_POOL_MAX_TOTAL_ATTEMPTS", "6"))
-    RETRY_WINDOW_SECONDS = float(os.getenv("ADMIN_POOL_RETRY_WINDOW", "90"))
     #: 软限流（429）冷却基数（秒）；连续触发按 2 倍指数退避，封顶 SOFT_RATE_MAX。
     SOFT_RATE_SECONDS = int(os.getenv("ADMIN_POOL_SOFT_RATE", "600"))
     #: 软冷却指数退避封顶（秒）。默认 2h，与参考实现一致。
@@ -171,8 +164,8 @@ class Settings:
     #: 「当前模型请求繁忙 / 请求过于频繁，请稍后重试」——上游自己给的建议
     #: 就是「稍后重试」，官方 UI 文案也是「请切换模型或稍后重试」。
     #: 给它 600 秒会把一次**瞬时**抖动放大成 10 分钟的整池停摆：
-    #: 一次请求轮转 3 个号，几个并发请求就能把整个号池全部冷掉
-    #: （2026-09-23 线上故障即为此：xx 个号 76 秒内全部 soft_rate，
+    #: 一次请求轮转 3 个号，几个并发请求就能把 15 个号的池子全部冷掉
+    #: （2026-09-23 线上故障即为此：16 个号 76 秒内全部 soft_rate，
     #: 冷却到 10 分钟后，期间所有请求直接 503）。
     REQUEST_RATE_SECONDS = int(os.getenv("ADMIN_POOL_REQUEST_RATE", "20"))
     #: 纯请求速率限流的指数退避封顶（秒）。留足退避余量但不至于停摆太久。
@@ -186,7 +179,6 @@ class Settings:
     SESSION_DEAD_THRESHOLD = int(os.getenv("ADMIN_POOL_SESSION_DEAD_THRESHOLD", "3"))
     #: 模型级限流（code 6004）时的兜底退避（秒），无上游重置时间时使用。
     MODEL_SOFT_RATE_SECONDS = int(os.getenv("ADMIN_POOL_MODEL_SOFT_RATE", "600"))
-    MODEL_DAILY_COOLDOWN_SECONDS = int(os.getenv("ADMIN_POOL_MODEL_DAILY_COOLDOWN", "86400"))
     #: 该后端无此模型（code 11102）的负缓存 TTL（秒）。重试无意义，只能换模型/换号。
     MODEL_BLOCK_SECONDS = int(os.getenv("ADMIN_POOL_MODEL_BLOCK", "21600"))
     #: token 保活定时任务的整点（本地时区）。留空则用默认 [22]。

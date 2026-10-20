@@ -4,6 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>WorkBuddy 共享管理后台</title>
+  <script src="/static/theme.js"></script>
+  <script src="/static/filter-combobox.js"></script>
   <!--
     全部静态资源都走本地 /static/vendor/**，不再依赖任何 CDN。
 
@@ -85,9 +87,8 @@
       --c1:#139e6f; --c2:#33a6a0; --c3:#526fb2; --c4:#9379c2;
       --c5:#ce9a43; --c6:#cb6c6d; --c7:#4492bd; --c8:#86a152;
     }
-    /* 深色模式：跟随系统（参考项目也支持，这里只做最小可用的一套） */
-    @media (prefers-color-scheme: dark){
-      :root{
+    /* Explicit preference; first visit always uses the light palette. */
+    :root[data-theme="dark"]{
         --bg:#0f172b; --surface:#1d293d; --surface-2:#29364b; --surface-3:#33425c;
         --border:rgba(255,255,255,.10); --border-soft:rgba(255,255,255,.06);
         --fg:#e2e8f0; --fg-muted:#90a1b9; --fg-subtle:#64748b;
@@ -101,7 +102,6 @@
         --c1:#48c190; --c2:#59c5bf; --c3:#92b3fb; --c4:#c2a7f4;
         --c5:#ebb761; --c6:#f79494; --c7:#6dbbe8; --c8:#a7c474;
       }
-    }
     body{
       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
       background:var(--bg); color:var(--fg);
@@ -379,11 +379,9 @@
     }
     .tbl tbody td{ padding:9px 14px; border-top:1px solid var(--border-soft); vertical-align:middle; }
     .tbl tbody tr:hover td{ background:rgba(15,23,42,.022); }
-    @media (prefers-color-scheme: dark){
-      .tbl tbody tr:hover td{ background:rgba(255,255,255,.035); }
-      .side-item:hover{ background:rgba(255,255,255,.06); }
-      .side-item.active{ background:rgba(255,255,255,.10); }
-    }
+    :root[data-theme="dark"] .tbl tbody tr:hover td{ background:rgba(255,255,255,.035); }
+    :root[data-theme="dark"] .side-item:hover{ background:rgba(255,255,255,.06); }
+    :root[data-theme="dark"] .side-item.active{ background:rgba(255,255,255,.10); }
 
     /* 空状态：虚线边框 + 安静文案（参考项目的 calm empty state） */
     .empty{
@@ -456,21 +454,18 @@
 
     /* 移动端横向滚动条美化 */
     .overflow-x-auto::-webkit-scrollbar{ height:8px; }
-    .overflow-x-auto::-webkit-scrollbar-thumb{ background:#d6d6dd; border-radius:8px; }
-    .overflow-x-auto::-webkit-scrollbar-track{ background:transparent; }
+    .overflow-x-auto::-webkit-scrollbar-thumb{ background:var(--brand); border-radius:8px; }
+    .overflow-x-auto::-webkit-scrollbar-track{ background:var(--surface-2); }
     /* 全局滚动条美化（纵向+横向）；Firefox 走标准属性 */
-    *{ scrollbar-width:thin; scrollbar-color:#d6d6dd transparent; }
+    *{ scrollbar-width:thin; scrollbar-color:var(--brand) var(--surface-2); }
     ::-webkit-scrollbar{ width:10px; height:10px; }
-    ::-webkit-scrollbar-track{ background:transparent; }
+    ::-webkit-scrollbar-track{ background:var(--surface-2); }
     ::-webkit-scrollbar-thumb{
-      background:#d6d6dd; border-radius:10px;
+      background:var(--brand); border-radius:10px;
       border:2px solid transparent; background-clip:content-box;
     }
-    ::-webkit-scrollbar-thumb:hover{ background:#b9b9c4; background-clip:content-box; }
+    ::-webkit-scrollbar-thumb:hover{ background:var(--brand-strong); background-clip:content-box; }
     ::-webkit-scrollbar-corner{ background:transparent; }
-    /* 深色容器（代码块）内滚动条换浅色，否则看不见 */
-    pre::-webkit-scrollbar-thumb{ background:#4b5563; background-clip:content-box; }
-    pre::-webkit-scrollbar-thumb:hover{ background:#6b7280; background-clip:content-box; }
 
     /* ==================== 自研下拉组件（替换原生 select）==================== */
     .ui-select{ position:relative; user-select:none; }
@@ -518,6 +513,13 @@
     .confirm-ico.warn{ background:#fef3c7; color:#d97706; }
     .confirm-ico.info{ background:rgba(40,184,148,.12); color:var(--wb-primary-d); }
     table.min-w{ min-width:680px; }
+    .model-limit-table{ min-width:1380px; }
+    .model-limit-table th:nth-child(1){ min-width:100px; }
+    .model-limit-table th:nth-child(2){ min-width:145px; }
+    .model-limit-table th:nth-child(3){ min-width:300px; }
+    .model-limit-table th:nth-child(4){ min-width:180px; }
+    .model-limit-table th:nth-child(5){ min-width:155px; }
+    .model-limit-table td{ overflow-wrap:anywhere; }
     table.min-w-sm{ min-width:560px; }
     table.min-w-lg{ min-width:940px; }
     /* 状态胶囊：表格里被窄列挤压时不允许折行（「正常」竖成两行非常难看） */
@@ -583,9 +585,7 @@
   vertical-align:middle; white-space:nowrap;
 }
 .acc-table tbody tr:hover td{ background:rgba(15,23,42,.022); }
-@media (prefers-color-scheme: dark){
-  .acc-table tbody tr:hover td{ background:rgba(255,255,255,.035); }
-}
+:root[data-theme="dark"] .acc-table tbody tr:hover td{ background:rgba(255,255,255,.035); }
 /* 名称列：**名字与 uid 同一行**。
  * 原来分两行（名字一行、uid 一行）把行高顶到 50px；
  * 合并后约 36px，一屏能多显示 4 行。uid 是次要信息，小字灰色跟在名字后面即可。 */
@@ -669,11 +669,11 @@
 
     /* 图表 tooltip（自绘：原生 <title> 延迟长、样式不可控） */
     #chartTip{
-      position:fixed; z-index:80; pointer-events:none; display:none;
-      background:rgba(17,24,39,.92); color:#fff; font-size:11px; line-height:1.5;
-      padding:.4rem .6rem; border-radius:.5rem; white-space:nowrap;
-      box-shadow:0 6px 20px rgba(0,0,0,.22); transform:translate(-50%,-115%);
-      transition:opacity .1s;
+      position:fixed; z-index:80; pointer-events:auto; display:none;
+      background:var(--surface); color:var(--fg); font-size:11px; line-height:1.5;
+      padding:.4rem .6rem; border-radius:8px; width:max-content;
+      max-width:calc(100vw - 16px); max-height:calc(100dvh - 16px); overflow:auto;
+      border:1px solid var(--border); box-shadow:var(--sh-pop); user-select:text; overflow-wrap:anywhere;
     }
     .chart-hit{ cursor:pointer; }
     .chart-hit:hover{ opacity:.85; }
@@ -761,10 +761,22 @@
         <button class="side-item" data-tab="client"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 16 0m-13 5v-5a5 5 0 0 1 10 0v3m-7 5v-8a2 2 0 0 1 4 0v5m-1 5a12 12 0 0 0 4-4M3 16v-1"/></svg> 客户端参数</button>
         <button class="side-item" data-tab="sync"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18a5 5 0 1 1 1-10 6 6 0 0 1 11 1 4 4 0 0 1 0 8m-6 4V11m-4 4 4-4 4 4"/></svg> 同步设置</button>
         <button class="side-item" data-tab="settings"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m10 3-1 3-3 1-2 3 2 2v3l2 2 3-1 2 2 3-1 1-3 3-1 1-3-3-2V7l-3-2-2 1Z"/><circle cx="12" cy="12" r="3"/></svg> 设置</button>
+        <button class="side-item" data-tab="journal"><i class="fa-solid fa-list"></i> 积分流水</button>
+        <button class="side-item" data-tab="maintenance"><i class="fa-solid fa-cloud-arrow-down"></i> 更新与备份</button>
         <!-- 抽屉内的退出入口（移动端顶栏放不下，收进菜单更自然） -->
         <button class="side-item side-item-quit" onclick="logout()"><i class="fa-solid fa-right-from-bracket"></i> 退出登录</button>
+        <div class="theme-controls mobile-theme-controls" role="group" aria-label="主题">
+          <span>主题</span>
+          <button type="button" data-theme-choice="light" onclick="WBTheme.set('light')" aria-label="浅色主题" title="浅色主题"><i class="fa-regular fa-sun" aria-hidden="true"></i></button>
+          <button type="button" data-theme-choice="dark" onclick="WBTheme.set('dark')" aria-label="深色主题" title="深色主题"><i class="fa-regular fa-moon" aria-hidden="true"></i></button>
+        </div>
       </nav>
       <div class="side-foot">
+        <div class="theme-controls" role="group" aria-label="主题">
+          <span>主题</span>
+          <button type="button" data-theme-choice="light" onclick="WBTheme.set('light')" aria-label="浅色主题" aria-pressed="true" title="浅色主题"><i class="fa-regular fa-sun" aria-hidden="true"></i></button>
+          <button type="button" data-theme-choice="dark" onclick="WBTheme.set('dark')" aria-label="深色主题" aria-pressed="false" title="深色主题"><i class="fa-regular fa-moon" aria-hidden="true"></i></button>
+        </div>
         <div id="proxyUrl" class="truncate mb-1-5"></div>
         <button id="appVersion" class="version-button" onclick="WBDesktop.openUpdates()" title="检查更新与版本历史">v… · 检查更新</button>
         <button onclick="logout()" class="hover-lift browser-logout"><i class="fa-solid fa-right-from-bracket mr-1"></i>退出登录</button>
@@ -815,14 +827,16 @@
         </div>
         <div class="account-tools">
           <label class="account-search"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><input id="accSearch" oninput="renderAccPage(1)" placeholder="搜索名称 / UID" aria-label="搜索账号名称或 UID" /></label>
-          <button type="button" onclick="refreshAll()" class="console-btn quiet"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></svg>刷新全部</button>
+          <button type="button" id="accountJobStatus" onclick="showAccountJob()" class="console-btn" hidden>执行中 · 查看进度</button>
+          <button type="button" data-account-batch onclick="accountBatchAction(refreshAll)" class="console-btn quiet"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></svg>刷新全部</button>
           <details class="action-menu" id="accountBatchMenu">
             <summary class="console-btn"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>管理操作 <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg></summary>
             <div class="action-menu-panel">
               <div class="action-menu-label">额度与批量管理</div>
+              <button type="button" data-account-batch onclick="closeAccountMenu(); WBBenefits.claimAll()"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="18" height="4" rx="1"/><path d="M5 12v9h14v-9M12 8v13"/></svg>一键领取 DeepSeek 补偿 · 500 积分</button>
               <button type="button" onclick="closeAccountMenu(); openModelLimits()"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9l6 3"/><circle cx="12" cy="12" r="9"/></svg>模型额度与冷却</button>
-              <button type="button" onclick="closeAccountMenu(); growthRunBatch()"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5H5v16h14V5h-4"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="m8 13 3 3 5-6"/></svg>成长任务与领奖</button>
-              <button type="button" onclick="closeAccountMenu(); catTravelBatch()"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 9 18-6-6 18-4-8-8-4Zm8 4 10-10"/></svg>猫猫旅行与领奖</button>
+              <button type="button" data-account-batch onclick="closeAccountMenu(); accountBatchAction(growthRunBatch)"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5H5v16h14V5h-4"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="m8 13 3 3 5-6"/></svg>成长任务与领奖</button>
+              <button type="button" data-account-batch onclick="closeAccountMenu(); accountBatchAction(catTravelBatch)"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 9 18-6-6 18-4-8-8-4Zm8 4 10-10"/></svg>猫猫旅行与领奖</button>
             </div>
           </details>
         </div>
@@ -861,6 +875,11 @@
         </div>
         <div class="grid gap-2 text-sm api-share-grid">
           <div class="flex items-center gap-2 flex-wrap api-share-row">
+            <label for="shareAddress" class="text-slate-400 w-32 shrink-0">连接地址</label>
+            <select id="shareAddress" onchange="renderShareAddress(this.value)" class="share-address-select border rounded-lg px-2 py-2 text-sm"></select>
+          </div>
+          <div id="shareNetworkStatus" class="text-xs text-slate-400" role="status"></div>
+          <div class="flex items-center gap-2 flex-wrap api-share-row">
             <span class="text-slate-400 w-32 shrink-0">Base URL <span class="text-[10px] text-slate-300">OpenAI</span></span>
             <code id="shareBaseUrl" class="flex-1 min-w-0 truncate rounded bg-slate-50 px-2 py-1 font-mono text-xs"></code>
             <button onclick="copyText('#shareBaseUrl')" class="px-2 py-1 rounded border text-xs shrink-0" title="复制"><i class="fa-solid fa-copy"></i></button>
@@ -886,11 +905,11 @@
           </div>
           <details class="text-xs text-slate-500">
             <summary class="cursor-pointer text-wb select-none">接入示例 · OpenAI 协议（curl）</summary>
-            <pre id="shareCurl" class="mt-2 bg-slate-900 text-slate-100 rounded-lg p-3 overflow-x-auto text-[11px] whitespace-pre"></pre>
+            <pre id="shareCurl" class="api-example mt-2 rounded-lg p-3 overflow-x-auto text-[11px] whitespace-pre"></pre>
           </details>
           <details class="text-xs text-slate-500">
             <summary class="cursor-pointer text-wb select-none">接入示例 · Claude Code / Anthropic 协议（curl）</summary>
-            <pre id="shareCurlClaude" class="mt-2 bg-slate-900 text-slate-100 rounded-lg p-3 overflow-x-auto text-[11px] whitespace-pre"></pre>
+            <pre id="shareCurlClaude" class="api-example mt-2 rounded-lg p-3 overflow-x-auto text-[11px] whitespace-pre"></pre>
           </details>
         </div>
       </div>
@@ -904,7 +923,7 @@
         <input id="keySearch" oninput="renderKeyPage(1)" placeholder="搜索名称" class="w-full border rounded-lg px-3 py-2 text-sm" />
       </div>
       <div class="card overflow-x-auto max-h-[70vh]">
-        <table class="w-full text-sm min-w">
+        <table class="tbl min-w">
           <thead class="bg-slate-50 text-slate-500 text-left sticky top-0">
             <tr>
               <th class="px-4 py-3">名称</th><th class="px-4 py-3">Key</th><th class="px-4 py-3">限额</th>
@@ -931,14 +950,20 @@
       <div class="flex gap-2 mb-3">
         <input id="modelSearch" oninput="renderModelPage(1)" placeholder="搜索模型 ID / 备注" class="w-full border rounded-lg px-3 py-2 text-sm" />
       </div>
+      <div class="model-display-controls">
+        <label class="model-switch" title="在模型列表接口返回的 name 中拼接倍率"><input id="modelShowMultiplier" type="checkbox" role="switch" checked onchange="saveModelDisplay()"><span></span>显示倍率</label>
+        <label class="model-switch" title="在模型列表接口返回的 name 中拼接繁忙程度"><input id="modelShowBusy" type="checkbox" role="switch" checked onchange="saveModelDisplay()"><span></span>显示繁忙程度</label>
+        <code id="modelNamePreview" class="model-name-preview"></code>
+        <button type="button" onclick="loadModelHealth()" class="console-btn quiet" title="刷新最近 24 小时模型健康统计"><i class="fa-solid fa-rotate"></i>刷新健康状态</button>
+      </div>
       <div class="card overflow-x-auto max-h-[70vh]">
-        <table class="w-full text-sm min-w">
+        <table class="tbl min-w">
           <thead class="bg-slate-50 text-slate-500 text-left sticky top-0">
             <tr>
               <th class="px-4 py-3">模型 ID</th><th class="px-4 py-3">级别</th>
-              <th class="px-4 py-3"><button type="button" onclick="toggleModelSort()" id="thModelMult"
+              <th class="px-4 py-3 model-mult-column"><button type="button" onclick="toggleModelSort()" id="thModelMult"
                 class="inline-flex items-center gap-1 hover:text-slate-700 font-medium" title="点击切换倍率排序（升序 → 降序 → 默认）">倍率 <i class="fa-solid fa-sort text-slate-300"></i></button></th>
-              <th class="px-4 py-3">繁忙程度</th><th class="px-4 py-3">备注</th><th class="px-4 py-3">状态</th><th class="px-4 py-3 text-right">操作</th>
+              <th class="px-4 py-3 model-busy-column">繁忙程度</th><th class="px-4 py-3">延迟与健康</th><th class="px-4 py-3">备注</th><th class="px-4 py-3">状态</th><th class="px-4 py-3 text-right">操作</th>
             </tr>
           </thead>
           <tbody id="modelBody"></tbody>
@@ -960,7 +985,7 @@
         绑定分组后该 Key 只能调用组内模型，调用组外模型返回 403（model_not_in_group）。
       </p>
       <div class="card overflow-x-auto max-h-[70vh]">
-        <table class="w-full text-sm min-w">
+        <table class="tbl min-w">
           <thead class="bg-slate-50 text-slate-500 text-left sticky top-0">
             <tr>
               <th class="px-4 py-3">分组名称</th><th class="px-4 py-3">模型数</th>
@@ -986,7 +1011,7 @@
       <p class="text-xs text-slate-400 mb-3">统计平台全部 Key 的用量：请求数、Token、积分与平均耗时。数据来自本地 usage_logs，随请求实时累计。</p>
 
       <!-- 筛选：按 Key / 模型 / 端点。筛选后所有图与卡片同步变化。 -->
-      <div class="card p-3 mb-4">
+      <div class="card p-3 mb-4 usage-filter-card">
         <div class="flex flex-wrap gap-2 items-end">
           <div class="flex-1 min-w-[150px]">
             <div class="text-[11px] text-slate-400 mb-1">按 Key</div>
@@ -1003,6 +1028,12 @@
           <button onclick="resetUsageFilters()" class="text-sm px-3 py-1.5 rounded-lg border hover:bg-slate-50 whitespace-nowrap">
             <i class="fa-solid fa-filter-circle-xmark mr-1"></i> 清除筛选
           </button>
+        </div>
+        <div class="usage-date-filters">
+          <div class="journal-field"><label for="usageStartButton">开始日期</label><input id="usageStart" type="date" aria-label="使用记录开始日期" data-date-picker /></div>
+          <div class="journal-field"><label for="usageEndButton">结束日期</label><input id="usageEnd" type="date" aria-label="使用记录结束日期" data-date-picker /></div>
+          <button class="console-btn primary" onclick="applyUsageDates()">查询</button>
+          <span class="usage-date-note">按本地日期查询，包含结束当天；留空使用上方时间范围。</span>
         </div>
         <div id="usageFilterHint" class="text-[11px] text-slate-400 mt-2 hidden"></div>
       </div>
@@ -1053,7 +1084,7 @@
       <p class="text-xs text-slate-400 mb-3">定时统计平台总积分、同步模型列表等。调度线程随服务启动运行，到点自动执行并回填结果。</p>
       <div class="card overflow-hidden">
         <div class="overflow-x-auto">
-          <table class="w-full text-sm min-w-lg">
+          <table class="tbl min-w-lg">
             <thead class="bg-slate-50 text-slate-500 text-left"><tr>
               <th class="px-4 py-3">任务名</th><th class="px-4 py-3">类型</th><th class="px-4 py-3">间隔(分)</th>
               <th class="px-4 py-3">下次运行</th><th class="px-4 py-3">上次结果</th><th class="px-4 py-3">状态</th>
@@ -1070,12 +1101,12 @@
       <div class="page-head">
         <div>
           <h1>用量日志</h1>
-          <p>每次代理调用的原始记录。<b>按账号查询</b>支持名称模糊匹配（会列出全部匹配的账号，
-             不再只取第一个），并可按账号汇总看谁在用、用了多少。</p>
+          <p>请求动态显示正在处理、限流和中断的请求；下方用量记录通常在请求结束后生成。</p>
         </div>
-        <div class="flex flex-wrap gap-2">
+        <div id="logActions" class="flex flex-wrap gap-2">
           <button onclick="exportLogs()" class="px-3 py-1.5 rounded-lg border text-sm" title="导出当前筛选结果为 CSV"><i class="fa-solid fa-file-csv mr-1"></i> 导出</button>
-          <button onclick="loadLogs(1)" class="px-3 py-1.5 rounded-lg border text-sm" title="刷新"><i class="fa-solid fa-rotate mr-1"></i> 刷新</button>
+          <button onclick="exportLogs(true)" class="px-3 py-1.5 rounded-lg border text-sm" title="含脱敏诊断，最多导出最近 1000 条">导出诊断</button>
+          <button onclick="loadLogs(1);loadRequestActivity()" class="px-3 py-1.5 rounded-lg border text-sm" title="刷新"><i class="fa-solid fa-rotate mr-1"></i> 刷新</button>
         </div>
       </div>
 
@@ -1092,14 +1123,14 @@
           </div>
           <div class="fld-150">
             <div class="text-[11px] mb-1" style="color:var(--fg-muted)">模型</div>
-            <input id="logModel" list="logModelList" placeholder="全部模型" class="w-full border rounded-lg px-3 py-2 text-sm" />
-            <datalist id="logModelList"></datalist>
+            <input id="logModel" aria-label="模型" placeholder="全部模型" class="w-full border rounded-lg px-3 py-2 text-sm" />
           </div>
           <div class="fld-150">
             <div class="text-[11px] mb-1" style="color:var(--fg-muted)">Key</div>
-            <input id="logKey" list="logKeyList" placeholder="全部 Key" class="w-full border rounded-lg px-3 py-2 text-sm" />
-            <datalist id="logKeyList"></datalist>
+            <input id="logKey" aria-label="Key" placeholder="全部 Key" class="w-full border rounded-lg px-3 py-2 text-sm" />
           </div>
+          <div class="fld-140"><div class="text-[11px] mb-1" style="color:var(--fg-muted)">调用结果</div>
+            <select id="logResult" aria-label="调用结果" onchange="loadLogs(1)" class="w-full border rounded-lg px-3 py-2 text-sm"><option value="">全部结果</option><option value="error">仅错误</option><option value="success">仅成功</option></select></div>
           <div class="fld-110">
             <div class="text-[11px] mb-1" style="color:var(--fg-muted)">客户端 IP</div>
             <input id="logIp" placeholder="全部" class="w-full border rounded-lg px-3 py-2 text-sm" />
@@ -1108,11 +1139,11 @@
         <div class="flex flex-wrap gap-2 items-end mt-2">
           <div class="fld-140">
             <div class="text-[11px] mb-1" style="color:var(--fg-muted)">起始日期</div>
-            <input id="logStart" type="date" class="w-full border rounded-lg px-2 py-2 text-sm" />
+            <input id="logStart" type="date" aria-label="用量日志起始日期" data-date-picker class="w-full border rounded-lg px-2 py-2 text-sm" />
           </div>
           <div class="fld-140">
             <div class="text-[11px] mb-1" style="color:var(--fg-muted)">结束日期</div>
-            <input id="logEnd" type="date" class="w-full border rounded-lg px-2 py-2 text-sm" />
+            <input id="logEnd" type="date" aria-label="用量日志结束日期" data-date-picker class="w-full border rounded-lg px-2 py-2 text-sm" />
           </div>
           <button onclick="loadLogs(1)" class="px-3 py-2 rounded-lg btn-primary text-sm"><i class="fa-solid fa-filter mr-1"></i> 查询</button>
           <button onclick="resetLogFilters()" class="px-3 py-2 rounded-lg border text-sm"><i class="fa-solid fa-filter-circle-xmark mr-1"></i> 清除</button>
@@ -1123,13 +1154,22 @@
             <input type="checkbox" id="logFastMode" onchange="loadLogs(1)" /> 快速翻页（不统计总数）
           </label>
         </div>
+        <div id="logStats" class="text-sm mt-3" aria-live="polite"></div>
         <div id="logFilterHint" class="text-[11px] mt-2 hidden"></div>
+      </div>
+
+      <div class="card p-4 mb-4">
+        <div class="section-head"><h3><button id="requestActivityToggle" type="button" aria-expanded="true" aria-controls="requestActivityContent" onclick="toggleLogCard('activity')">请求动态 <span data-fold-label>收起 ▴</span></button></h3><span class="hint" id="requestActivityHint">加载中...</span></div>
+        <div id="requestActivityContent">
+        <p class="text-xs mb-3" style="color:var(--fg-muted)">实时推送（有变化才更新，折叠或离开本页即断开），跟随 Key 名称筛选。限流和中断也会显示；这些记录不额外扣除积分。下方用量表首页在请求结算后自动更新。</p>
+        <div id="requestActivity" class="overflow-x-auto" style="max-height:320px"></div>
+        </div>
       </div>
 
       <!-- 按账号汇总：回答「这个号到底用了多少」，不必翻几十页日志去数 -->
       <div class="card p-4 mb-4">
         <div class="section-head">
-          <h3>按账号汇总</h3>
+          <h3><button id="logSummaryToggle" type="button" aria-expanded="true" aria-controls="logSummary" onclick="toggleLogCard('summary')">按账号汇总 <span data-fold-label>收起 ▴</span></button></h3>
           <span class="hint" id="logSummaryHint"></span>
         </div>
         <div id="logSummary" class="overflow-x-auto"></div>
@@ -1286,6 +1326,9 @@
           <div class="section-head" style="margin:0">
             <h3>账号到期排行</h3>
             <span class="hint" id="creditAccHint"></span>
+            <button id="creditAutoOrder" class="console-btn quiet credit-sort-reset" onclick="resetCreditOrder()"
+                    data-tooltip="恢复自动排序"
+                    data-tooltip-description="清除手动优先级，回到「按积分到期紧迫度自动排序」—— 界面上排第一的账号就是下一个会被选中的账号。保存后立刻生效，在途请求继续执行。">恢复自动排序</button>
           </div>
           <label class="flex items-center gap-1.5 fs-11-5" style="color:var(--fg-muted)">
             <input type="checkbox" id="creditShowDisabled" onchange="loadCreditStats()" /> 含已禁用账号
@@ -1312,6 +1355,26 @@
       </div>
     </section>
 
+    <section id="panel-journal" class="hidden">
+      <div class="page-head"><div><h1>积分流水</h1><p>查看奖励与余额变动，追溯每一笔积分。</p></div></div>
+      <div class="card journal-card">
+        <div class="journal-filters">
+          <div class="journal-field"><span id="journalAccountLabel">账号</span><select id="journalAccount" aria-label="账号"><option value="">全部账号</option></select></div>
+          <div class="journal-field"><span>来源</span><select id="journalSource" aria-label="来源"><option value="">全部来源</option></select></div>
+          <div class="journal-field"><span>记录类型</span><select id="journalKind" aria-label="记录类型"><option value="">全部类型</option><option value="confirmed">确认奖励</option><option value="observed">余额观察</option></select></div>
+          <div class="journal-field"><span>开始时间</span><input id="journalStart" type="datetime-local" aria-label="开始时间" /></div>
+          <div class="journal-field"><span>结束时间</span><input id="journalEnd" type="datetime-local" aria-label="结束时间" /></div>
+          <div class="journal-actions"><button class="console-btn primary" onclick="WBReview.loadJournal(1)">筛选 / 刷新</button><button class="console-btn quiet" onclick="WBReview.resetJournal()">重置</button></div>
+        </div>
+        <div class="journal-notice">确认奖励与余额观察分别记录，不能相加统计；历史未保存的来源和余额显示为未记录。</div>
+        <div class="overflow-x-auto"><table class="tbl journal-table"><thead><tr><th>时间</th><th>账号</th><th>类型</th><th>来源</th><th class="journal-number">积分变化</th><th class="journal-number">本次观察余额</th></tr></thead><tbody id="journalBody"></tbody></table></div>
+        <div class="journal-footer"><p id="journalHint" role="status"></p><div class="journal-pagination"><button id="journalPrev" class="console-btn" onclick="WBReview.journalPage(-1)">上一页</button><span id="journalPage"></span><button id="journalNext" class="console-btn" onclick="WBReview.journalPage(1)">下一页</button></div></div>
+      </div>
+    </section>
+    <section id="panel-maintenance" class="hidden">
+      <div class="page-head"><div><h1>更新与备份</h1><p>检查正式版本、备份数据库，并按部署方式执行升级。</p></div><button class="console-btn" onclick="WBReview.loadUpdate()">检查更新</button></div>
+      <div id="maintenanceInfo" aria-live="polite">点击检查更新获取版本信息。</div>
+    </section>
     <!-- 设置面板 -->
     <section id="panel-settings" class="hidden">
       <h2 class="font-semibold mb-3">管理员设置</h2>
@@ -1414,6 +1477,8 @@
     </div>
   </div>
 
+<link rel="stylesheet" href="/static/phone-region.css" />
+<script src="/static/phone-session.js"></script>
 <script>
 let _confirmResolve = null;
 
@@ -1508,7 +1573,7 @@ function uiSelectToggle(id, ev) {
   el.classList.toggle("open", !wasOpen);
 }
 
-function uiSelectPick(id, value, ev) {
+function uiSelectPick(id, value, ev, notify = true) {
   if (ev) ev.stopPropagation();
   const st = _uiSelectMap.get(id);
   const el = $("#" + id);
@@ -1526,15 +1591,15 @@ function uiSelectPick(id, value, ev) {
     if (!on && old) old.remove();
   });
   el.classList.remove("open");
-  if (st.onChange) st.onChange(value, o);
+  if (notify && st.onChange) st.onChange(value, o);
 }
 
 function uiSelectValue(id) {
   const st = _uiSelectMap.get(id);
   return st ? st.value : "";
 }
-function uiSelectSet(id, value) {
-  uiSelectPick(id, String(value));
+function uiSelectSet(id, value, notify = true) {
+  uiSelectPick(id, String(value), null, notify);
 }
 const $ = (s) => document.querySelector(s);
 const TOKEN_KEY = "wb_admin_token";
@@ -1572,9 +1637,31 @@ function fmtK(n) {
   return String(n);
 }
 
-function api(path, opts = {}) {
+let _localSessionPromise = null, _localSessionReady = false;
+async function ensureLocalSession(force = false) {
+  if (_localSessionReady && !force) return;
+  if (!_localSessionPromise) _localSessionPromise = (async () => {
+    const token = window.pywebview?.api ? (await pywebview.api.desktop_login()).token : await WBAndroid.sessionToken();
+    if (!token) throw new Error('本地连接凭据未准备好');
+    TOKEN = token; localStorage.setItem(TOKEN_KEY, token); _localSessionReady = true;
+  })().finally(() => { _localSessionPromise = null; });
+  return _localSessionPromise;
+}
+async function api(path, opts = {}) {
+  const localShell = window.pywebview?.api || window.WBAndroid?.sessionToken;
+  // Prepare the non-expiring shell credential before the first request;
+  // concurrent panel loads share one bridge call and never need a login form.
+  if (localShell) await ensureLocalSession();
   opts.headers = Object.assign({ "X-Admin-Token": TOKEN }, opts.headers || {});
-  return fetch(path, opts);
+  let response = await fetch(path, opts);
+  if (response.status === 401 && localShell) {
+    try {
+      await ensureLocalSession(true);
+      opts.headers['X-Admin-Token'] = TOKEN;
+      response = await fetch(path, opts);
+    } catch (_) {}
+  }
+  return response;
 }
 async function safeJson(r) {
   /* 容错解析：后端偶发返回非 JSON（如 500 明文）时，避免报 "Unexpected token" 崩溃 */
@@ -1586,11 +1673,12 @@ function toast(msg, type = "ok") {
   const c = type === "ok" ? "bg-emerald-600" : "bg-red-600";
   const el = document.createElement("div");
   el.className = `text-white text-sm px-4 py-2 rounded-lg shadow ${c} fade-in`;
-  el.innerHTML = msg;
+  el.textContent = msg;
   $("#toasts").appendChild(el);
   setTimeout(() => el.remove(), 3200);
 }
 function openModal(html, widthClass) {
+  $('#modal').dataset.closeOnly = '';
   const box = $("#modalBox");
   // Reset every previous size, including the phone-login max-w-md class.
   [...box.classList].filter(name => /^max-w-/.test(name)).forEach(name => box.classList.remove(name));
@@ -1604,16 +1692,29 @@ function openModal(html, widthClass) {
   $("#modal").classList.remove("hidden");
   $("#modal").classList.add("flex");
 }
-function closeModal() { $("#modal").classList.add("hidden"); $("#modal").classList.remove("flex"); }
-function copyText(sel){ const i = $(sel); if(!i) return;
-  // <input>/<textarea> 走 value，普通元素（如 <code>）走 textContent
-  const s = ("value" in i && i.value !== undefined && i.tagName !== "CODE") ? i.value : (i.textContent||"");
-  if(navigator.clipboard) navigator.clipboard.writeText(s); else { i.select?.(); document.execCommand("copy"); }
-  toast("已复制"); }
+function closeModal() { window.WBPhone?.closeRegion(); $("#modal").classList.add("hidden"); $("#modal").classList.remove("flex"); }
+async function copyText(sel){
+  const source = $(sel); if(!source) return;
+  const text = source.value ?? source.textContent ?? '';
+  try {
+    if (!navigator.clipboard) throw new Error('Clipboard unavailable');
+    await navigator.clipboard.writeText(text);
+    toast('已复制'); return;
+  } catch (_) {}
+  const previous = document.activeElement;
+  const field = document.createElement('textarea');
+  field.value = text; field.readOnly = true;
+  field.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0';
+  document.body.append(field); field.select(); field.setSelectionRange(0, text.length);
+  let copied = false;
+  try { copied = document.execCommand('copy'); } catch (_) {}
+  finally { field.remove(); previous?.focus?.({preventScroll:true}); }
+  toast(copied ? '已复制' : '复制失败，请选中文字复制', copied ? 'ok' : 'err');
+}
 
 document.addEventListener("DOMContentLoaded", () => {
-  $("#modal")?.addEventListener("click", (e) => { if (e.target === $("#modal")) closeModal(); });
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+  $("#modal")?.addEventListener("click", (e) => { if (e.target === $("#modal") && !$('#modal').dataset.closeOnly) closeModal(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$('#modal').dataset.closeOnly) closeModal(); });
 
   // 登录页回车提交（用户名 / 密码框内按 Enter）
   ["username", "password"].forEach(id => {
@@ -1673,7 +1774,7 @@ function enterApp() {
 
 // Tabs
 // 面板清单与默认面板：默认面板不写进 URL（保持地址栏干净）。
-const TABS = ["accounts","credits","usage","keys","models","groups","schedules","growth","logs","client","sync","settings"];
+const TABS = ["journal","maintenance","accounts","credits","usage","keys","models","groups","schedules","growth","logs","client","sync","settings"];
 const TAB_DEFAULT = "accounts";
 
 /** 从地址栏读当前应显示的面板；非法/缺失一律回落到默认面板。 */
@@ -1695,7 +1796,10 @@ function _tabFromUrl() {
  */
 function activateTab(name, opts) {
   if (!TABS.includes(name)) name = TAB_DEFAULT;
+  if (name !== 'logs') stopLogActivity();
   document.documentElement.dataset.activeTab = name;
+  window.WBDateTimePicker?.close();
+  window.WBFilterCombobox?.close();
   // 侧栏导航：active 由 .side-item.active 表达
   document.querySelectorAll(".side-item").forEach(x => {
     x.classList.toggle("active", x.dataset.tab === name);
@@ -1720,6 +1824,8 @@ function activateTab(name, opts) {
   }
 
   // 切到这几个面板时按需拉数据（图表/分组列表/客户端参数不必在首屏就请求）
+  if (name === "journal") window.WBReview?.loadJournal(1);
+  if (name === "maintenance") window.WBReview?.loadUpdate();
   if (name === "groups") loadGroups();
   if (name === "usage") loadUsageStats();
   if (name === "credits") loadCreditStats();
@@ -1911,7 +2017,10 @@ function pkgRowHtml(p, opts) {
   const showAccount = opts.showAccount !== false && p.account_name;
   const dateTxt = p.expired ? "已到期" : (p.expire_date || "长期");
   const color = p.expired ? 'var(--danger)' : (p.expiring_soon ? 'var(--warn)' : 'var(--fg-muted)');
-  return `<div class="pkg-row" title="${esc(p.display_name || '')} · 剩余 ${remaining} / ${total} · ${esc(p.expire_label || '长期有效')}">
+  // 提示统一走系统的 actionTooltip：原生 title 要悬停一两秒才出、样式不受控，
+  // 而这一行本来就是「一眼看清这个包还剩多少、什么时候作废」。
+  return `<div class="pkg-row" data-tooltip="${esc(p.display_name || '积分包')}"
+    data-tooltip-description="${esc('剩余 ' + remaining + ' / ' + total + ' · ' + (p.expire_label || '长期有效'))}">
     <div class="pkg-line">
       <span class="pkg-amt">${fmtCreditExact(remaining)}</span>
       <span class="truncate" style="color:var(--fg-muted)">${esc(p.display_name || "积分包")}${
@@ -2025,20 +2134,34 @@ function accountLimitBadge(a) {
   return gateway + `<button class="limit-chip" onclick="openModelLimits(${a.id})" data-tooltip="${limits.length} 个模型冷却" data-tooltip-description="${esc(scope + '\n' + detail)}" aria-label="查看模型冷却列表">${limits.length} 模型冷却</button>`;
 }
 function modelLimitDeadlineLabel(entry) {
-  return {upstream:'上游重置时间',queue_retry:'上游建议重试时间',estimated:'本地保守冷却至',backoff:'本地退避至'}[entry.reset_source] || '本地冷却至';
+  return {upstream:'上游重置时间',client_midnight:'按客户端规则，次日零点可重试',queue_retry:'上游建议重试时间',estimated:'本地保守冷却至',backoff:'本地退避至'}[entry.reset_source] || '本地冷却至';
+}
+
+function upstreamEvidenceHtml(info) {
+  if (!info || (!info.raw && !info.http_status && !info.code)) return '<small>尚无上游错误原文</small>';
+  const display = typeof info.display_message === 'string' ? info.display_message : JSON.stringify(info.display_message || {});
+  return `<details><summary>上游 HTTP ${esc(info.http_status ?? '未记录')} / code ${esc(info.code ?? '未返回')}</summary>
+    ${info.client_message ? `<p>客户端解释：${esc(info.client_message)} ${esc(info.client_description || '')}</p>` : ''}
+    ${info.message != null ? `<p>上游 message：${esc(info.message)}</p>` : ''}
+    ${info.display_message ? `<p>上游 displayMsg：${esc(display)}</p>` : ''}
+    <pre style="white-space:pre-wrap;overflow-wrap:anywhere;max-width:560px;max-height:220px;overflow:auto">${esc(info.raw)}</pre></details>`;
 }
 
 // One fixed tooltip avoids clipping by scroll containers and supports keyboard focus.
 let _actionTipTarget = null;
 let _actionTipTimer = null;
+let _actionTipHideTimer = null;
 function hideActionTooltip() {
   clearTimeout(_actionTipTimer);
+  clearTimeout(_actionTipHideTimer);
   const tip = document.getElementById('actionTooltip');
   if (tip) tip.hidden = true;
   if (_actionTipTarget) _actionTipTarget.removeAttribute('aria-describedby');
   _actionTipTarget = null;
 }
 function showActionTooltip(target, immediate = false) {
+  clearTimeout(_actionTipHideTimer);
+  if (_actionTipTarget === target) return;
   hideActionTooltip();
   _actionTipTarget = target;
   _actionTipTimer = setTimeout(() => {
@@ -2046,6 +2169,8 @@ function showActionTooltip(target, immediate = false) {
     let tip = document.getElementById('actionTooltip');
     if (!tip) {
       tip = document.createElement('div'); tip.id = 'actionTooltip'; tip.role = 'tooltip';
+      tip.addEventListener('pointerenter', () => clearTimeout(_actionTipHideTimer));
+      tip.addEventListener('pointerleave', scheduleActionTooltipHide);
       document.body.appendChild(tip);
     }
     tip.innerHTML = `<strong>${esc(target.dataset.tooltip)}</strong><span>${esc(target.dataset.tooltipDescription || '')}</span>`;
@@ -2053,8 +2178,18 @@ function showActionTooltip(target, immediate = false) {
     target.setAttribute('aria-describedby', 'actionTooltip');
     const r = target.getBoundingClientRect(), t = tip.getBoundingClientRect();
     tip.style.left = Math.max(8, Math.min(innerWidth - t.width - 8, r.left + r.width / 2 - t.width / 2)) + 'px';
-    tip.style.top = (r.top > t.height + 12 ? r.top - t.height - 8 : r.bottom + 8) + 'px';
+    tip.style.top = Math.max(8, Math.min(innerHeight - t.height - 8, r.top > t.height + 12 ? r.top - t.height - 8 : r.bottom + 8)) + 'px';
   }, immediate ? 0 : 200);
+}
+function scheduleActionTooltipHide() {
+  clearTimeout(_actionTipHideTimer);
+  _actionTipHideTimer = setTimeout(() => {
+    const tip = document.getElementById('actionTooltip');
+    if (tip?.matches(':hover') || _actionTipTarget?.matches(':hover')) return;
+    const selection = getSelection();
+    if (selection && !selection.isCollapsed && tip?.contains(selection.anchorNode)) return;
+    hideActionTooltip();
+  }, 300);
 }
 document.addEventListener('pointerover', e => {
   if (e.pointerType === 'touch') return;
@@ -2062,15 +2197,21 @@ document.addEventListener('pointerover', e => {
   if (target && !target.contains(e.relatedTarget)) showActionTooltip(target);
 });
 document.addEventListener('pointerout', e => {
-  if (_actionTipTarget && !_actionTipTarget.contains(e.relatedTarget)) hideActionTooltip();
+  if (_actionTipTarget?.contains(e.target) && !_actionTipTarget.contains(e.relatedTarget)) scheduleActionTooltipHide();
 });
 document.addEventListener('focusin', e => {
   const target = e.target.closest('[data-tooltip]');
   if (target) showActionTooltip(target, true);
 });
-document.addEventListener('focusout', hideActionTooltip);
-document.addEventListener('scroll', hideActionTooltip, true);
-document.addEventListener('click', hideActionTooltip);
+document.addEventListener('focusout', e => {
+  if (!document.getElementById('actionTooltip')?.contains(e.relatedTarget)) scheduleActionTooltipHide();
+});
+document.addEventListener('scroll', e => {
+  if (!document.getElementById('actionTooltip')?.contains(e.target)) hideActionTooltip();
+}, true);
+document.addEventListener('click', e => {
+  if (!document.getElementById('actionTooltip')?.contains(e.target) && !_actionTipTarget?.contains(e.target)) hideActionTooltip();
+});
 document.addEventListener('keydown', e => { if (e.key === 'Escape') hideActionTooltip(); });
 window.addEventListener('resize', hideActionTooltip);
 
@@ -2093,17 +2234,18 @@ async function openModelLimits(accountId = null) {
       Number(Number(a.available_accounts) > 0) - Number(Number(b.available_accounts) > 0)
       || Number(b.limited_accounts || 0) - Number(a.limited_accounts || 0)
       || String(a.model || '').localeCompare(String(b.model || '')));
-    const kind = {model_daily:'日额度耗尽',model_rate:'短时限流',model_queue:'上游排队',model_block:'模型不可用'};
-    const source = {upstream:'上游明确重置时间',queue_retry:'上游 retry_after（重试间隔，不是排队结束时间）',estimated:'本地保守估计，上游未返回重置时间',backoff:'本地退避策略，不代表上游已恢复'};
+    const kind = {model_daily:'模型日限额已触发',model_rate:'短时限流',model_queue:'上游排队',model_block:'上游模型服务不存在 / 未配置'};
+    const source = {upstream:'上游明确重置时间',client_midnight:'客户端 6008 规则：次日零点重置（北京时间）',queue_retry:'上游 retry_after（重试间隔，不是排队结束时间）',estimated:'上游未给重置时间，本地保守冷却（默认 24 小时）',backoff:'本地退避策略，不代表上游已恢复'};
     const risk = healthResult.ok ? healthResult.data.risk : null;
     const observations = risk?.observations || {};
     const riskCount = reason => Number(observations[reason]?.requests || 0);
     const backgroundSkips = Object.values(risk?.maintenance?.skipped_since_start || {}).reduce((sum, n) => sum + Number(n), 0);
-    container.innerHTML = `<p class="limit-note">积分余额与模型每日额度分别计算；0 倍率模型也可能触发日限额。冷却仅作用于对应账号的对应模型，到期后自动恢复候选资格。今日请求 / Token 仅统计本网关成功调用，无法据此推算官方剩余额度或客户端消耗。</p>
+    container.innerHTML = `<p class="limit-note">积分余额与模型每日额度分别计算，0 倍率模型也会触发日限额。6004 = 每日 Token 上限；6008 = 每日请求数上限，客户端说明次日零点重置。上游未提供每日限额数值时显示“未知”，不能用本网关用量推算官方剩余额度。冷却到期仅恢复重试资格。</p>
       ${d.waf_remaining_seconds > 0 ? `<p class="limit-note">出口 IP 保护已触发，约 ${d.waf_remaining_seconds} 秒后解除本地保护，是否可用仍需上游确认。</p>` : ''}
       ${risk ? `<p class="limit-note">近 ${Number(risk.window_minutes)} 分钟网关观测：WAF ${riskCount('waf')} 次，账号限流 ${riskCount('soft_rate')} 次，模型限流 / 排队 ${riskCount('model_rate')} 次，授权限制 ${riskCount('account_fault')} 次，登录失效 ${riskCount('session_dead')} 次。后台当前预留 ${Number(risk.maintenance.reserved_accounts)} 个账号，本进程启动以来累计保护跳过 ${backgroundSkips} 次；这是本网关观测，不代表官方风控评分。</p>` : ''}
       <h4 class="health-title">当前模型限制 · 不可用优先</h4>
-      <div class="overflow-x-auto"><table class="tbl min-w"><thead><tr><th>账号</th><th>模型</th><th>原因</th><th>重置 / 重试 / 本地冷却截止（北京时间）</th><th>依据</th><th>今日请求 / Token</th><th>操作</th></tr></thead><tbody>${entries.map(e => `<tr><td>${esc(e.account_name)}</td><td>${esc(e.model)}</td><td>${kind[e.kind] || esc(e.kind)}</td><td>${modelLimitDeadlineLabel(e)}<br>${fmtTime(e.until)}</td><td>${source[e.reset_source] || '本地退避策略'}</td><td>${e.requests_today} / ${e.tokens_today}</td><td><button class="console-btn quiet" onclick="clearModelLimit(${e.account_id},${esc(JSON.stringify(e.model))})">解除冷却</button></td></tr>`).join('') || '<tr><td colspan="7" class="account-empty">当前没有模型冷却记录</td></tr>'}</tbody></table></div>
+      <div class="overflow-x-auto"><table class="tbl model-limit-table"><thead><tr><th>账号</th><th>模型</th><th>本网关判断 / 上游依据</th><th>重置 / 重试 / 本地冷却截止（北京时间）</th><th>时间依据</th><th>官方日限额 / 剩余</th><th>本网关今日成功 / 请求 · Token</th><th>操作</th></tr></thead><tbody>${entries.map(e => `<tr><td>${esc(e.account_name)}</td><td>${esc(e.model)}</td><td>${e.upstream_code === '6004' ? '每日 Token 已达上限' : e.upstream_code === '6008' ? '每日请求数已达上限' : kind[e.kind] || esc(e.kind)}${upstreamEvidenceHtml(e.upstream_error)}</td><td>${modelLimitDeadlineLabel(e)}<br>${fmtTime(e.until)}</td><td>${source[e.reset_source] || '本地退避策略'}</td><td>${esc(e.quota_total ?? '未知')} / ${esc(e.quota_remaining ?? '未知')}</td><td>${e.successes_today ?? '—'} / ${e.requests_today ?? 0}<br>Token：${e.tokens_today == null ? '未记录' : fmtK(e.tokens_today)}</td><td><button class="console-btn quiet" onclick="clearModelLimit(${e.account_id},${esc(JSON.stringify(e.model))})">解除冷却</button></td></tr>`).join('') || '<tr><td colspan="8" class="account-empty">当前没有模型冷却记录</td></tr>'}</tbody></table></div>
+      <details class="limit-note"><summary>最近账号错误原文（${(d.account_errors || []).filter(e => accountId == null || e.account_id === accountId).length} 条，历史记录不代表当前不可用）</summary>${(d.account_errors || []).filter(e => accountId == null || e.account_id === accountId).map(e => `<div><b>${esc(e.account_name)}</b>${upstreamEvidenceHtml(e.upstream_error)}</div>`).join('')}</details>
       <h4 class="health-title">模型健康 · 近 24 小时（无可选账号优先）</h4>
       <div class="overflow-x-auto"><table class="tbl health-table"><thead><tr><th>模型</th><th>可选 / 受限账号</th><th>成功 / 请求</th><th>失败率</th><th>首响应 P50 / P95</th><th>总耗时 P95</th><th>最早冷却截止</th></tr></thead><tbody>${healthResult.ok ? healthItems.map(m => `<tr><td><b>${esc(m.model)}</b>${m.free ? '<small class="health-free">免费</small>' : ''}</td><td>${m.available_accounts} / ${m.limited_accounts}</td><td>${m.successes} / ${m.requests}</td><td>${m.failure_rate == null ? '—' : (m.failure_rate * 100).toFixed(1) + '%'}</td><td>${m.ttfb_ms.p50 == null ? '—' : m.ttfb_ms.p50 + ' ms'} / ${m.ttfb_ms.p95 == null ? '—' : m.ttfb_ms.p95 + ' ms'}</td><td>${m.latency_ms.p95 == null ? '—' : m.latency_ms.p95 + ' ms'}</td><td>${m.earliest_model_recovery ? fmtTime(m.earliest_model_recovery) : '—'}</td></tr>`).join('') || '<tr><td colspan="7" class="account-empty">暂无模型观测</td></tr>' : '<tr><td colspan="7" class="account-empty">健康统计暂时不可用</td></tr>'}</tbody></table></div>
       <p class="limit-note">延迟取最近最多 2000 条成功记录；账号可选数包含当前进程在途占用和出口保护。冷却截止只表示可再次尝试，不保证上游模型或账号已恢复可用。</p>
@@ -2132,6 +2274,8 @@ function accRow(a) {
   const soon = Number(a.credits_expiring_soon || 0);
   // 图标操作按钮抽成数组：顺序/配色一处可调，比 9 个 button 平铺更好维护
   const ops = [
+    [`WBReview.accountLimit(${a.id})`, "fa-sliders", "text-indigo-600", "账号并发上限"],
+    [`openReauthAccount(${a.id})`, "fa-key", "text-emerald-600", "重新登录"],
     [`growthTasks(${a.id},'${esc(a.name||'')}')`, "fa-seedling", "text-emerald-600", "成长任务"],
     [`catTravel(${a.id})`, "fa-cat", "text-pink-600", "猫猫旅行"],
     [`viewCreditDetails(${a.id},'${esc(a.name||'')}')`, "fa-list-ul", "text-amber-600", "积分明细（逐包到期日）"],
@@ -2168,6 +2312,14 @@ function accRow(a) {
 }
 
 let _accountResourceTimer = null;
+let _accountPage = 1;
+let _overviewRefreshing = false;
+setInterval(async () => {
+  if (document.hidden || !TOKEN || $('#app').classList.contains('hidden') || _overviewRefreshing) return;
+  _overviewRefreshing = true;
+  try { await loadAccounts(); } catch (_) {}
+  finally { _overviewRefreshing = false; }
+}, 30000);
 async function loadAccounts() {
   clearTimeout(_accountResourceTimer);
   const r = await api("/api/accounts"); if (!r.ok) return;
@@ -2204,11 +2356,11 @@ async function loadAccounts() {
       + (s.disabled ? ` · 已禁用 ${s.disabled}` : "") + `）`;
   }
   _accData = d.items || [];
-  if (_accData.some(a => ['queued','running'].includes(a.resource_initialization?.status))) {
+  if (_accData.some(a => ['queued','running'].includes(a.resource_initialization?.status) || ['queued','running'].includes(a.post_login_automation?.status))) {
     _accountResourceTimer = setTimeout(async () => { await loadAccounts(); await loadModels(); }, 2000);
   }
   _accSummary = s;
-  renderAccPage(1);
+  renderAccPage(_accountPage);
   // 侧栏角标：没打开积分面板也能看到「有额度要作废」
   const dot = $("#sideExpiringDot");
   if (dot) {
@@ -2249,6 +2401,7 @@ function renderAccPage(p) {
   $("#filterDisabledCount").textContent = _accData.filter(a => a.status === "disabled").length;
   const total = data.length, totalPages = Math.max(1, Math.ceil(total / PS));
   p = Math.min(Math.max(1, p), totalPages);
+  _accountPage = p;
   const slice = data.slice((p - 1) * PS, p * PS);
   $("#accBody").innerHTML = slice.map(accRow).join("") ||
     `<tr><td colspan="6"><div class="account-empty"><strong>${term || _accountFilter !== "all" ? "没有匹配的账号" : "添加第一个账号"}</strong>${term || _accountFilter !== "all" ? "试试其他关键词，或切换账号状态筛选。" : "通过手机号登录，或导入已有账号备份即可开始。"}</div></td></tr>`;
@@ -2261,10 +2414,13 @@ async function refreshAcc(id){
     // 刷新现在会一并更新积分到期快照（后端 with_expiry 默认开），
     // 所以提示里带上「7 天内到期」的数字 —— 这才是用户刷新想确认的事。
     const soon = Number((data && data.credits_expiring_soon) || 0);
-    toast(soon > 0 ? `已刷新：${soon} 积分将在 7 天内到期` : "余额与积分到期快照已刷新");
+    toast(data?.warnings?.length ? '余额已刷新，到期快照未完整更新' : soon > 0 ? `已刷新：${soon} 积分将在 7 天内到期` : "余额与积分到期快照已刷新");
   } else {
-    toast("刷新失败" + (data && data.detail ? "：" + data.detail : ""), "err");
+    const detail = data?.detail;
+    toast(typeof detail === 'object' ? detail.message : '刷新失败' + (detail ? '：' + detail : ''), 'err');
+    if (detail?.upstream) openModal(`<h3>账号余额刷新失败</h3><p class="limit-note">本网关记录的上游响应如下：</p>${upstreamEvidenceHtml(detail.upstream)}`, 'max-w-3xl');
   }
+  if (r.ok && data?.warnings?.length) openModal(`<h3>余额已刷新，到期快照未完整更新</h3>${data.warnings.map(upstreamEvidenceHtml).join('')}`, 'max-w-3xl');
   if (r.ok) { loadAccounts(); if (_creditStats) loadCreditStats(); }
 }
 async function toggleAcc(id,st){ await api("/api/accounts/"+id,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:st})}); loadAccounts(); }
@@ -2332,8 +2488,49 @@ async function catTravel(id) {
      3. 关掉弹窗不会中断后台执行（线程还在跑），重新点按钮能看到进度。
    ========================================================================== */
 let _jobTimer = null;
+let _accountActionBusy = false;
+let _accountJob = null;
 
-/** 关闭进度弹窗时停止轮询（后台任务不受影响，仍在跑）。 */
+function syncAccountBatchButtons() {
+  const busy = _accountActionBusy || !!_accountJob;
+  document.querySelectorAll('[data-account-batch]').forEach(button => {
+    if (busy && !button.dataset.batchLocked) {
+      button.dataset.batchWasDisabled = button.disabled ? '1' : '0';
+      button.dataset.batchLocked = '1';
+      button.disabled = true;
+    } else if (!busy && button.dataset.batchLocked) {
+      button.disabled = button.dataset.batchWasDisabled === '1';
+      delete button.dataset.batchLocked;
+    }
+    button.setAttribute('aria-busy', String(busy));
+  });
+  const status = document.getElementById('accountJobStatus');
+  if (status) {
+    status.hidden = !busy;
+    status.disabled = !_accountJob;
+    status.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> ' + (_accountJob ? '执行中 · 查看进度' : '准备中…');
+  }
+}
+async function accountBatchAction(action) {
+  if (_accountJob) { showAccountJob(); return; }
+  if (_accountActionBusy) return;
+  _accountActionBusy = true;
+  syncAccountBatchButtons();
+  try { await action(); }
+  catch (error) { toast('批量操作失败：' + esc(String(error.message || error)), 'err'); }
+  finally { _accountActionBusy = false; syncAccountBatchButtons(); }
+}
+function showAccountJob() {
+  if (!_accountJob) return;
+  openModal(`<h3 class="font-bold mb-2">${esc(_accountJob.opts.title)}</h3>
+    <div id="jobHead" class="text-sm">正在提交，请稍候…</div>
+    <div id="jobList" class="rounded-lg border bg-slate-50 px-3 py-1 max-h-72 overflow-auto text-sm"></div>
+    <p class="text-xs mt-3" style="color:var(--fg-muted)">关闭弹窗后任务继续执行，可点击“查看进度”重新打开。</p>
+    <div class="flex justify-end mt-4"><button onclick="closeModal()" class="console-btn">关闭</button></div>`);
+  if (_accountJob.snapshot) updateJobProgress(_accountJob.snapshot, _accountJob.opts);
+}
+
+/** Only stop polling when the task finishes; closing the modal keeps it alive. */
 function stopJobPoll() {
   if (_jobTimer) { clearInterval(_jobTimer); _jobTimer = null; }
 }
@@ -2413,15 +2610,13 @@ function updateJobProgress(d, opts) {
 
 /** 提交后台任务并开始轮询进度。 */
 async function runJob(opts) {
+  if (_accountJob) { showAccountJob(); return; }
   stopJobPoll();
   // 两个**固定容器**：轮询时只更新它们的内容，不重建整块 DOM。
   // 整块重建会让列表每 1.5 秒消失再出现 —— 就是「卡片闪来闪去」的原因。
-  openModal(`<h3 class="font-bold mb-1">${opts.iconHtml || ""} ${esc(opts.title)}</h3>
-    <div id="jobHead" class="text-sm text-slate-500">正在提交...</div>
-    <div id="jobList" class="rounded-lg border bg-slate-50 px-3 py-1 max-h-72 overflow-auto text-sm"></div>
-    <div class="flex justify-end gap-2 mt-4">
-      <button onclick="stopJobPoll(); closeModal()" class="px-3 py-1.5 rounded-lg border text-sm">关闭</button>
-    </div>`);
+  _accountJob = {opts, snapshot:null};
+  syncAccountBatchButtons();
+  showAccountJob();
 
   let d;
   try {
@@ -2430,34 +2625,46 @@ async function runJob(opts) {
       body: JSON.stringify(opts.body || {}),
     });
     const j = await safeJson(r);
-    if (!r.ok) {
+    if (!r.ok || !j.ok || !j.data?.job_id) {
+      showAccountJob();
       $("#jobHead").innerHTML = `<span class="text-red-500">提交失败: ${esc(j.data?.detail || "未知错误")}</span>`;
+      _accountJob = null; syncAccountBatchButtons();
       return;
     }
     d = j.data;
   } catch (e) {
+    showAccountJob();
     $("#jobHead").innerHTML = `<span class="text-red-500">提交异常: ${esc(String(e))}</span>`;
+    _accountJob = null; syncAccountBatchButtons();
     return;
   }
 
   if (d.reused) toast("已有批量任务在执行，显示其进度", "ok");
+  _accountJob.snapshot = d;
   updateJobProgress(d, opts);
 
+  let polling = false;
   _jobTimer = setInterval(async () => {
+    if (polling) return;
+    polling = true;
     try {
       const r = await api(`/api/growth/job/${d.job_id}`);
       const j = await safeJson(r);
       if (!r.ok || !j.data) return;
       const cur = j.data;
-      if (!$("#jobHead")) { stopJobPoll(); return; }   // 弹窗被关掉了
+      if (_accountJob) _accountJob.snapshot = cur;
       updateJobProgress(cur, opts);
       if (cur.status !== "running") {
         stopJobPoll();
-        if (cur.status === "failed") toast("批量执行失败：" + (cur.error || ""), "err");
-        else toast(opts.doneToast(cur), "ok");
+        showAccountJob();
+        _accountJob = null; syncAccountBatchButtons();
+        if (cur.status === "failed") toast("批量执行失败：" + esc(cur.error || ""), "err");
+        else toast(esc(opts.doneToast(cur)), "ok");
         opts.onFinish && opts.onFinish(cur);
       }
-    } catch (e) { /* 轮询失败忽略，下次再试 */ }
+    } catch (e) {
+      if ($("#jobHead")) $("#jobHead").textContent = '进度连接暂时中断，正在重试；请勿重复提交。';
+    } finally { polling = false; }
   }, 1500);
 }
 
@@ -3064,7 +3271,7 @@ async function scanLocal(){
     </div>
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
       <div class="hidden md:block overflow-x-auto max-h-72">
-        <table class="w-full text-sm">
+        <table class="tbl">
           <thead class="bg-slate-50 text-slate-500 text-left sticky top-0 z-10 shadow-sm"><tr>
             <th class="px-3 py-2 text-xs font-medium">账号</th><th class="px-3 py-2 text-xs font-medium whitespace-nowrap">Token 到期</th><th class="px-3 py-2 text-xs font-medium text-right">状态 / 操作</th>
           </tr></thead>
@@ -3105,9 +3312,13 @@ async function importAll(){
   if(d.errors) console.warn(d.errors);
 }
 async function refreshAll(){
-  const r=await api("/api/accounts"); if(!r.ok)return; const ids=(await r.json()).items.map(x=>x.id);
-  for(const id of ids){ await api("/api/accounts/"+id+"/refresh",{method:"POST"}); }
-  toast("全部刷新完成"); loadAccounts();
+  await runJob({title:'刷新全部账号余额与到期快照', submitUrl:'/api/accounts/refresh-batch', body:{},
+    label:item => item.account || item.account_id, detail:item => item.reason || '',
+    amount:() => '', icon:item => item.ok ? '<i class="fa-solid fa-check text-emerald-500"></i>' : '<i class="fa-solid fa-clock text-amber-600"></i>',
+    doneText:job => job.result?.summary || '刷新完成', summaryHtml:() => '',
+    doneToast:job => job.result?.summary || '刷新完成',
+    onFinish:() => { loadAccounts(); if (_creditStats) loadCreditStats(); }
+  });
 }
 
 /* ==========================================================================
@@ -3406,7 +3617,8 @@ function renderCreditAccounts(d) {
   const hint = $("#creditAccHint");
   if (!body) return;
   const rows = d.accounts || [];
-  if (hint) hint.textContent = `${rows.length} 个账号 · 与调度优先级同序`;
+  if (hint) hint.textContent = `${rows.length} 个账号 · ${d.selection_mode === 'manual' ? '手动优先级' : '自动按到期排序'} · 调整将影响真实账号使用顺序`;
+  if ($('#creditAutoOrder')) $('#creditAutoOrder').disabled = d.selection_mode !== 'manual';
   if (!rows.length) {
     body.innerHTML = `<tr><td colspan="9"><div class="empty">没有账号。先在「账号池」里添加。</div></td></tr>`;
     return;
@@ -3417,7 +3629,8 @@ function renderCreditAccounts(d) {
     const rank = i + 1;
     // 前三名给「快到期」的视觉权重 —— 这三个人就是接下来会被优先使用的号
     const rankHtml = soon > 0 && rank <= 3
-      ? `<span class="exp-badge soon" title="调度会优先使用这个账号">${rank}</span>`
+      ? `<span class="exp-badge soon" data-tooltip="优先级 ${rank}"
+           data-tooltip-description="调度会优先使用这个账号：它还有 7 天内到期、不用完就会作废的额度。排名越靠前，越早被选中。">${rank}</span>`
       : `<span class="tnum" style="color:var(--fg-subtle)">${rank}</span>`;
     const next = (a.next_expiring || []).slice(0, 2)
       .map(p => pkgRowHtml(p, { showAccount: false })).join("");
@@ -3437,12 +3650,67 @@ function renderCreditAccounts(d) {
       <td class="align-top">${expiryBadge(a.soonest_days_left, expired > 0 && a.soonest_expire_at === null, a.expiring_soon)}
         ${a.synced_at ? `<div class="text-[10px] mt-0.5" style="color:var(--fg-subtle)">${fmtTime(new Date(a.synced_at).toISOString().replace('T',' ').slice(0,19), false)} 采集</div>` : ""}</td>
       <td class="align-top" style="min-width:230px">${next || `<span class="text-[11px]" style="color:var(--fg-subtle)">没有仍有剩余的积分包</span>`}</td>
-      <td class="align-top text-right whitespace-nowrap">
-        <button onclick="viewCreditDetails(${a.account_id},'${esc(a.account_name)}')" class="text-amber-600 hover:text-amber-800 mr-1" title="查看全部积分包"><i class="fa-solid fa-list-ul"></i></button>
-        <button onclick="refreshAcc(${a.account_id}).then(loadCreditStats)" class="text-indigo-600 hover:text-indigo-800" title="重新采集该账号"><i class="fa-solid fa-rotate"></i></button>
+      <td class="align-top text-right whitespace-nowrap credit-ops">
+        <!-- 操作提示统一走系统的 actionTooltip（data-tooltip / data-tooltip-description）：
+             title 属性是浏览器原生气泡，延迟 1~2 秒才出现、样式不可控、鼠标一动就消失，
+             而这张表里「上移/下移会改变真实选号顺序」必须说清楚，误点代价不小。
+             排序按钮加浅色底：它们是这个表格里唯一会改变系统行为的操作，
+             不能和「查看明细」「重新采集」这种只读操作长得一样。 -->
+        <button type="button" class="console-btn quiet credit-sort-btn" onclick="moveCreditAccount(${a.account_id},-1)"
+                aria-label="上移账号 ${esc(a.account_name)}"
+                data-tooltip="上移 · 提高真实使用优先级"
+                data-tooltip-description="${esc('把「' + a.account_name + '」与上一名对调。保存后立刻影响真实选号顺序，在途请求继续执行；只有手动排序模式下才会生效。')}"
+                ${i === 0 ? 'disabled' : ''}><i class="fa-solid fa-arrow-up"></i></button>
+        <button type="button" class="console-btn quiet credit-sort-btn" onclick="moveCreditAccount(${a.account_id},1)"
+                aria-label="下移账号 ${esc(a.account_name)}"
+                data-tooltip="下移 · 降低真实使用优先级"
+                data-tooltip-description="${esc('把「' + a.account_name + '」与下一名对调。保存后立刻影响真实选号顺序，在途请求继续执行；只有手动排序模式下才会生效。')}"
+                ${i === rows.length - 1 ? 'disabled' : ''}><i class="fa-solid fa-arrow-down"></i></button>
+        <button type="button" class="console-btn quiet credit-op-btn" onclick="viewCreditDetails(${a.account_id},'${esc(a.account_name)}')"
+                aria-label="查看 ${esc(a.account_name)} 的全部积分包"
+                data-tooltip="积分明细 · 逐包到期日"
+                data-tooltip-description="查看该账号全部积分包的余额、总额度与到期日（按到期升序，排最前的最先作废）。默认读库内快照，秒开；要最新数据请在弹窗里点「重新采集」。"
+                style="color:var(--warn)"><i class="fa-solid fa-list-ul"></i></button>
+        <button type="button" class="console-btn quiet credit-op-btn" onclick="refreshAcc(${a.account_id}).then(loadCreditStats)"
+                aria-label="重新采集 ${esc(a.account_name)} 的积分与到期快照"
+                data-tooltip="重新采集该账号"
+                data-tooltip-description="只对这一个账号真实调用上游（余额 + 逐包到期快照，约 0.4~2 秒）。全部账号请用右上角「重新采集」。"
+                style="color:var(--brand-ink)"><i class="fa-solid fa-rotate"></i></button>
       </td>
     </tr>`;
   }).join("");
+}
+
+let _creditOrderSaving = false;
+async function saveCreditOrder(mode, ids, description) {
+  if (_creditOrderSaving || !_creditStats) return;
+  _creditOrderSaving = true;
+  const expected = [...(_creditStats.selection_order || [])];
+  try {
+    if (!await uiConfirm({title:'确认调整真实账号优先级', danger:true,
+      message:description + '这会改变实际被优先使用的账号，下一次选号即生效。停用、额度限制、冷却和账号独享绑定仍然有效；在途请求继续执行。是否确认？', okText:'确认调整'})) return;
+    const response = await api('/api/credits/selection-order', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({mode, ids, expected_ids:expected, confirm:true})});
+    const result = await safeJson(response);
+    if (!result.ok) { toast(result.data.detail || '保存排序失败', 'err'); await loadCreditStats(); return; }
+    toast(mode === 'manual' ? '真实账号优先级已更新' : '已恢复自动按到期排序');
+    await loadCreditStats();
+  } catch (error) { toast('保存排序失败：' + error.message, 'err'); }
+  finally { _creditOrderSaving = false; }
+}
+async function moveCreditAccount(accountId, direction) {
+  const visible = _creditStats?.accounts || [];
+  const index = visible.findIndex(a => a.account_id === accountId);
+  const other = visible[index + direction];
+  if (index < 0 || !other || ![-1, 1].includes(direction)) return;
+  const ids = [...(_creditStats.selection_order || [])];
+  const from = ids.indexOf(accountId), to = ids.indexOf(other.account_id);
+  if (from < 0 || to < 0) return;
+  [ids[from], ids[to]] = [ids[to], ids[from]];
+  await saveCreditOrder('manual', ids, `将「${visible[index].account_name}」从第 ${index + 1} 位移至第 ${index + direction + 1} 位。`);
+}
+async function resetCreditOrder() {
+  await saveCreditOrder('automatic', [], '恢复按积分到期紧迫度自动排序，清除手动优先级。');
 }
 
 /* ==================== 手机号登录（全自动授权换凭证） ====================
@@ -3450,21 +3718,36 @@ function renderCreditAccounts(d) {
  * 应用户手机号 + 验证码，由**服务端**完成整条 auth 授权并把凭证直接入库。
  * 全程不需要安装 WorkBuddy 客户端，手机浏览器也能走完。
  */
-let _plSid = "", _plTimer = null, _plCountdown = 0;
+let _plSid = "", _plTimer = null, _plCountdown = 0, _plBusy = false, _plRetryUntil = 0, _plRestoring = false;
+function plSave() {
+  WBPhone.save('wb_admin_phone', {sid:_plSid, mobile:$('#plMobile')?.value || '',
+    country:$('#plCountry')?.value || '86', retryUntil:_plRetryUntil,
+    codeSent:!$('#plStep2')?.classList.contains('hidden')});
+}
 
-function openPhoneLogin(){
-  if(_plTimer){ clearInterval(_plTimer); _plTimer = null; }
-  _plSid = "";
+let _plAccountId = null;
+async function openPhoneLogin(accountId = null){
+  const sameTarget = _plAccountId === accountId;
+  _plAccountId = accountId;
+  if (sameTarget && $('#plMobile') && $('#plStep3').classList.contains('hidden')) {
+    $('#modal').classList.remove('hidden'); $('#modal').classList.add('flex');
+    $('#modal').dataset.closeOnly = '1'; return;
+  }
+  const saved = WBPhone.read('wb_admin_phone');
+  _plSid = saved.sid || '';
   openModal(`
     <h3 class="font-bold mb-1"><i class="fa-solid fa-mobile-screen-button mr-1 text-emerald-600"></i> 手机号登录</h3>
+    <p class="text-xs text-slate-500 mb-2">${accountId ? `正在重新登录账号 #${Number(accountId)}，只接受原身份，保留历史与绑定。` : ""}</p>
     <p class="text-xs text-slate-500 mb-4">输入手机号获取验证码。登录成功后系统会自动完成授权，把凭证加入账号池；<b>无需安装客户端</b>。</p>
 
     <div id="plStep1">
       <label class="text-xs text-slate-500">手机号</label>
       <div class="flex gap-2 mt-1">
-        <span class="px-3 py-2 rounded-lg bg-slate-100 text-sm text-slate-500 shrink-0">+86</span>
+        <select id="plCountry" aria-label="地区" onchange="plSave()">
+          <option value="86">+86 中国大陆</option><option value="852">+852 中国香港</option><option value="853">+853 中国澳门</option>
+        </select>
         <input id="plMobile" type="tel" inputmode="numeric" maxlength="11" placeholder="11 位手机号"
-               class="flex-1 border rounded-lg px-3 py-2 text-sm font-mono" />
+               oninput="plSave()" class="flex-1 min-w-0 border rounded-lg px-3 py-2 text-sm font-mono" />
       </div>
       <div class="flex justify-end gap-2 mt-4">
         <button onclick="closeModal()" class="px-3 py-1.5 rounded-lg border text-sm">取消</button>
@@ -3497,6 +3780,33 @@ function openPhoneLogin(){
       <a href="/join" target="_blank" rel="noopener noreferrer" onclick="watchJoinAuthorization()"><i class="fa-solid fa-arrow-up-right-from-square mr-1" aria-hidden="true"></i>授权页面</a>
       <span>在浏览器完成授权后自动加入账号池</span>
     </div>`, "max-w-md");
+  $('#modal').dataset.closeOnly = '1';
+  $('#plMobile').value = saved.mobile || '';
+  $('#plCountry').value = ['86','852','853'].includes(saved.country) ? saved.country : '86';
+  WBPhone.mountRegion($('#plCountry'), $('#plMobile'));
+  $('#plMobile').maxLength = $('#plCountry').value === '86' ? 11 : 8;
+  _plRetryUntil = saved.retryUntil || 0;
+  _plRestoring = !!_plSid;
+  plStartCountdown(Math.max(0, Math.ceil((_plRetryUntil-Date.now())/1000)));
+  if (_plSid) {
+    try {
+      const response = await api('/api/login/status/' + encodeURIComponent(_plSid));
+      if (!response.ok) throw new Error('无法恢复登录会话');
+      const state = await response.json();
+      if (state.alive && !state.consumed && state.code_sent) {
+        $('#plMobile').value = state.mobile; $('#plCountry').value = state.country_code;
+        WBPhone.syncRegion($('#plCountry'));
+        $('#plStep1').classList.add('hidden'); $('#plStep2').classList.remove('hidden');
+        $('#plHint').textContent = '验证码已发送至 +' + state.country_code + ' ' + state.mobile;
+        plStartCountdown(Math.max(state.retry_after || 0, Math.ceil((_plRetryUntil-Date.now())/1000)));
+      } else if (!state.alive || state.consumed) { _plSid = ''; WBPhone.clear('wb_admin_phone'); }
+    } catch (e) { toast(e.message, 'err'); }
+    finally {
+      _plRestoring = false;
+      if ($('#plSendBtn')) $('#plSendBtn').disabled = _plBusy || Date.now() < _plRetryUntil;
+      if ($('#plResendBtn')) $('#plResendBtn').disabled = _plBusy || Date.now() < _plRetryUntil;
+    }
+  }
   setTimeout(() => { const el = $("#plMobile"); if(el) el.focus(); }, 60);
 }
 
@@ -3519,38 +3829,45 @@ async function plStart(){
     throw new Error((data.detail && (data.detail.message || data.detail)) || "发起登录失败");
   }
   _plSid = data.sid;
+  plSave();
   return data.sid;
 }
 
 function plStartCountdown(sec){
-  _plCountdown = sec;
+  _plRetryUntil = Date.now() + Math.max(0, sec) * 1000;
   const btn = $("#plResendBtn");
   if(_plTimer) clearInterval(_plTimer);
   const tick = () => {
+    _plCountdown = Math.max(0, Math.ceil((_plRetryUntil - Date.now()) / 1000));
     const b = $("#plResendBtn");
     if(!b) { clearInterval(_plTimer); return; }
     if(_plCountdown <= 0){
       clearInterval(_plTimer); _plTimer = null;
-      b.disabled = false; b.textContent = "重新获取";
+      b.disabled = _plBusy || _plRestoring; b.textContent = "重新获取";
+      if ($('#plSendBtn')) { $('#plSendBtn').disabled = _plBusy || _plRestoring; $('#plSendBtn').textContent = '获取验证码'; }
       return;
     }
     b.disabled = true; b.textContent = _plCountdown + "s";
-    _plCountdown--;
+    if ($('#plSendBtn')) { $('#plSendBtn').disabled = true; $('#plSendBtn').textContent = _plCountdown + 's'; }
   };
   tick();
-  _plTimer = setInterval(tick, 1000);
+  if (_plCountdown > 0) _plTimer = setInterval(tick, 1000);
+  plSave();
 }
 
 async function plSend(){
+  if (_plBusy || _plRestoring || Date.now() < _plRetryUntil) return;
   const mobile = ($("#plMobile").value || "").replace(/\D/g, "");
-  if(!/^1[3-9]\d{9}$/.test(mobile)){ toast("请输入正确的 11 位手机号", "err"); return; }
+  const country_code = $('#plCountry').value;
+  if(!WBPhone.valid(country_code, mobile)){ toast("请输入所选地区的有效手机号", "err"); return; }
+  _plBusy = true;
   const btn = $("#plSendBtn") || $("#plResendBtn");
   if(btn) btn.disabled = true;
   try {
     if(!_plSid) await plStart();
     const r = await api("/api/login/send", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sid: _plSid, mobile })
+      body: JSON.stringify({ sid: _plSid, mobile, country_code })
     });
     const { ok, data } = await safeJson(r);
     if(!ok){
@@ -3559,35 +3876,37 @@ async function plSend(){
       // 会话可能已过期（超时/已消费）→ 清掉，下次点击自动重开
       if(d && d.step === "session") _plSid = "";
       toast(String(msg), "err");
-      if(btn) btn.disabled = false;
+      plStartCountdown(Number(r.headers.get('Retry-After')) || 60);
       return;
     }
     $("#plStep1").classList.add("hidden");
     $("#plStep2").classList.remove("hidden");
-    $("#plHint").textContent = "验证码已发送至 " + mobile + "，请查看短信（60 秒内有效）";
-    plStartCountdown(60);
+    $("#plHint").textContent = "验证码已发送至 +" + country_code + ' ' + mobile + "，请查看短信";
+    plStartCountdown(data.retry_after || 60);
     setTimeout(() => { const el = $("#plCode"); if(el) el.focus(); }, 60);
   } catch(e){
     toast(String(e.message || e), "err");
-    if(btn) btn.disabled = false;
-  }
+    plStartCountdown(60);
+  } finally { _plBusy = false; }
 }
 
 async function plVerify(){
+  if (_plBusy) return;
   const code = ($("#plCode").value || "").replace(/\D/g, "");
   if(code.length !== 6){ toast("请输入 6 位验证码", "err"); return; }
   if(!_plSid){ toast("会话已失效，请重新获取验证码", "err"); return; }
+  _plBusy = true;
   const btn = $("#plVerifyBtn");
   if(btn){ btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1"></i> 登录中…'; }
   try {
     const r = await api("/api/login/verify", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sid: _plSid, code })
+      body: JSON.stringify({ sid: _plSid, code, account_id: _plAccountId })
     });
     const { ok, data } = await safeJson(r);
-    $("#plStep2").classList.add("hidden");
-    $("#plStep3").classList.remove("hidden");
     if(ok){
+      $('#plStep2').classList.add('hidden'); $('#plStep3').classList.remove('hidden');
+      _plSid = ''; WBPhone.clear('wb_admin_phone');
       // 上游验证结果一并展示：既证明凭证真实可用，也让「积分/账号名」
       // 直接来自腾讯侧的事实（而不是凭证里那个可能被改过的 account 字段）
       const ck = data.check || {};
@@ -3600,14 +3919,13 @@ async function plVerify(){
     } else {
       const d = data.detail;
       const msg = (d && (d.message || d)) || "登录失败";
-      $("#plResultIcon").innerHTML = '<i class="fa-solid fa-circle-xmark text-red-500"></i>';
-      $("#plResultMsg").innerHTML = `<div class="text-red-600">${esc(String(msg))}</div>`;
+      toast(esc(String(msg)), 'err');
     }
   } catch(e){
-    $("#plStep2").classList.add("hidden");
-    $("#plStep3").classList.remove("hidden");
-    $("#plResultIcon").innerHTML = '<i class="fa-solid fa-circle-xmark text-red-500"></i>';
-    $("#plResultMsg").innerHTML = `<div class="text-red-600">${esc(String(e.message || e))}</div>`;
+    toast(esc(String(e.message || e)), 'err');
+  } finally {
+    _plBusy = false;
+    if(btn){ btn.disabled = false; btn.textContent = '登录并上传'; }
   }
 }
 
@@ -3615,10 +3933,10 @@ async function plVerify(){
 function openUpload(){
   openModal(`
     <h3 class="font-bold mb-3"><i class="fa-solid fa-file-import mr-1"></i> 批量上传账号</h3>
-    <p class="text-xs text-slate-500 mb-2">粘贴多个 WorkBuddy 登录态（.info 原文）。支持：①一个 JSON 数组；②每行一个 JSON 对象。也可选择本地 .info 文件。</p>
+    <p class="text-xs text-slate-500 mb-2">粘贴 WorkBuddy 登录态，支持单个 JSON、JSON 数组或每行一个 JSON。也可选择多个凭证文件：新版加密、旧版明文及 .info.bak-时间戳备份均支持，按文件内容验证。</p>
     <p class="text-xs text-amber-600 mb-2"><i class="fa-solid fa-shield-halved mr-1"></i>每条都会调真实上游接口验证是否可用，<b>伪造的凭证会被拒收</b>（因此上传略慢，属正常）。</p>
     <textarea id="upText" class="w-full border rounded-lg p-2 text-xs h-40 font-mono" placeholder='{"auth":{...},"account":{...}}'></textarea>
-    <input id="upFile" type="file" accept=".info,.json" multiple class="upload-file-input" />
+    <input id="upFile" type="file" multiple class="upload-file-input" aria-label="选择账号凭证或备份文件" />
     <div id="upResult" class="upload-result hidden" role="status" aria-live="polite"></div>
     <div class="upload-footer">
       <button id="upSubmit" type="button" onclick="submitUpload()" class="console-btn primary upload-submit"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v12m-4-4 4 4 4-4M4 16v4h16v-4"/></svg><span>确认导入</span></button>
@@ -3710,8 +4028,7 @@ async function submitUpload(){
 /* ==========================================================================
    账号导出
    --------------------------------------------------------------------------
-   导出的是 .info 原文（与「批量上传」接受的格式完全一致），
-   所以导出的文件可以直接再传回来，不需要任何转换。
+   单账号为官方加密 .info，批量为加密凭证集合或明文备份。
    ========================================================================== */
 
 /** 触发浏览器下载一个文本文件。 */
@@ -3741,9 +4058,12 @@ function openExport() {
       <i class="fa-solid fa-triangle-exclamation mr-1"></i>
       导出内容包含登录 token，等同账号凭据，请勿外传或提交到代码仓库。
     </div>
-    <p class="text-xs text-slate-500 mb-2">
-      导出为 <code>.info</code> 原文，可直接用「批量上传」再导回，格式完全兼容。
-    </p>
+    <label class="block text-sm mb-3">导出格式
+      <select id="expFormat" class="w-full border rounded-lg px-3 py-2 mt-2">
+        <option value="client">官方新版加密凭证集（.jsonl）</option>
+        <option value="backup">系统明文备份（.jsonl）</option>
+      </select>
+    </label>
     <label class="flex items-center gap-2 text-sm mb-3">
       <input id="expIncludeDisabled" type="checkbox" class="rounded" />
       包含已禁用的账号
@@ -3765,7 +4085,7 @@ async function _fetchExport() {
   const r = await api("/api/accounts/export", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ids: [], include_disabled: !!inc })
+    body: JSON.stringify({ ids: [], include_disabled: !!inc, format: $('#expFormat')?.value || 'client' })
   });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) { toast("导出失败：" + (d.detail || r.status), "err"); return null; }
@@ -3780,7 +4100,7 @@ async function doExport() {
   // 也能用文本工具按行处理，比单个大数组更实用。
   const text = d.items.map(x => JSON.stringify(JSON.parse(x))).join("\n");
   try {
-    await downloadText(`workbuddy-accounts-${exportStamp()}.info`, text);
+    await downloadText(`workbuddy-accounts-${d.format === 'client' ? 'encrypted' : 'backup'}-${exportStamp()}.jsonl`, text, 'application/x-ndjson');
     closeModal();
     toast(`已导出 ${d.count} 个账号${d.skipped ? `（跳过 ${d.skipped} 个无效凭据）` : ""}`, "ok");
   } catch(error) { toast(error.message || '文件未保存', 'err'); }
@@ -3806,7 +4126,7 @@ async function copyExport() {
 
 /** 导出单个账号。 */
 async function exportAcc(id, name) {
-  const r = await api(`/api/accounts/${id}/export`);
+  const r = await api(`/api/accounts/${id}/export?format=client`);
   const d = await r.json().catch(() => ({}));
   if (!r.ok) { toast("导出失败：" + (d.detail || r.status), "err"); return; }
   const safe = String(name || d.name || d.uid || id).replace(/[\\/:*?"<>|]/g, "_").slice(0, 40);
@@ -3814,6 +4134,34 @@ async function exportAcc(id, name) {
     await downloadText(`${safe || "account"}-${id}.info`, JSON.stringify(JSON.parse(d.item), null, 2));
     toast(`已导出账号「${name || d.name || id}」`, "ok");
   } catch(error) { toast(error.message || '文件未保存', 'err'); }
+}
+
+function openReauthAccount(id) {
+  openModal(`<h3 class="font-bold mb-2">重新登录 · 账号 #${Number(id)}</h3>
+    <p class="text-sm mb-4">验证通过后更新原账号凭证，保留排序、Key 绑定与历史记录。模型日限不会因重登而重置。</p>
+    <button class="console-btn mb-3" onclick="openPhoneLogin(${Number(id)})">手机号验证码登录</button>
+    <label class="block text-sm mb-2">上传凭证或备份文件 <input id="reauthFile" type="file" /></label>
+    <p class="text-xs text-slate-500 mb-2">支持新版加密、旧版明文及 .info.bak-时间戳备份；将验证凭证是否仍可用、是否属于原账号。</p>
+    <textarea id="reauthJson" class="w-full border rounded-lg p-2 text-xs h-40 font-mono" placeholder="或粘贴最新账号凭证"></textarea>
+    <div class="flex gap-2 mt-3"><button id="reauthSubmit" class="console-btn" onclick="submitReauthAccount(${Number(id)})">验证并更新原账号</button><button class="console-btn quiet" onclick="closeModal()">取消</button></div>`);
+  $('#reauthFile').onchange = async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 1024 * 1024) { toast('凭证文件过大', 'err'); return; }
+    $('#reauthJson').value = await file.text();
+  };
+}
+async function submitReauthAccount(id) {
+  const button = $('#reauthSubmit');
+  const auth_json = $('#reauthJson').value.trim();
+  if (!auth_json) { toast('请上传或粘贴最新凭证', 'err'); return; }
+  button.disabled = true;
+  try {
+    const {ok, data} = await safeJson(await api('/api/accounts/' + Number(id) + '/reauth', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({auth_json})}));
+    if (!ok) { toast(typeof data.detail === 'string' ? data.detail : data.detail?.message || '验证失败，原凭证未修改', 'err'); return; }
+    closeModal(); toast(data.message); loadAccounts();
+  } catch (_) { toast('更新失败，请检查连接后重试', 'err'); }
+  finally { button.disabled = false; }
 }
 
 function openAddAccount(){
@@ -3846,7 +4194,7 @@ function keyRow(k) {
       <td class="px-4 py-3 font-mono text-xs text-slate-500">${esc(k.masked)}</td>
       <td class="px-4 py-3">${k.unlimited?"∞":k.credit_limit}</td>
       <td class="px-4 py-3 ${k.credit_used>=k.credit_limit&&!k.unlimited?'text-red-500':''}">${k.credit_used}</td>
-      <td class="px-4 py-3" title="key 并发≠账号在途上限（ADMIN_POOL_MAX_IN_FLIGHT）">${k.max_concurrent===0?'不限':(k.max_concurrent==null?'全局':k.max_concurrent)}</td>
+      <td class="px-4 py-3" title="同一个 Key 的所有对话共享并发和每分钟请求额度">${k.max_concurrent===0?'不限':(k.max_concurrent==null?'全局':k.max_concurrent)}<div class="text-xs text-slate-400">${k.rate_per_minute===0?'不限频率':(k.rate_per_minute==null?'频率随全局':k.rate_per_minute+' 次/分')}</div></td>
       <td class="px-4 py-3">${k.group_name
           ? `<span class="badge bg-indigo-100 text-indigo-700" title="仅可用该分组内模型">${esc(k.group_name)}</span>`
           : `<span class="text-xs text-slate-300" title="不限制，可用全部启用模型">全部模型</span>`}</td>
@@ -3866,11 +4214,45 @@ async function loadKeys(){
 }
 /* 对外对接信息：暴露 baseurl + 启用模型列表，供把 Key 共享给外部使用 */
 async function loadShareInfo() {
+  const selected = $('#shareAddress')?.value;
+  const choices = new Map([[location.origin, '当前访问 · ' + location.host]]);
+  let status = '';
+  try {
+    const response = await api('/api/app/network');
+    if (!response.ok) throw new Error('无法读取内网地址');
+    const network = await response.json();
+    const port = location.port || (['localhost', '127.0.0.1'].includes(location.hostname) ? network.port : '');
+    const suffix = port ? ':' + port : '';
+    choices.set('http://127.0.0.1' + suffix, '本机 · 127.0.0.1' + suffix);
+    for (const ip of network.lan_ips || []) choices.set('http://' + ip + suffix, '局域网 · ' + ip + suffix);
+    if (!(network.lan_ips || []).length) status = '未检测到内网 IPv4，请检查 Wi-Fi 或有线网络连接。';
+  } catch (_) { status = '内网地址读取失败，可点击刷新重试。'; }
+  const picker = $('#shareAddress');
+  if (picker) {
+    picker.replaceChildren(...[...choices].map(([value,label]) => new Option(label, value)));
+    picker.value = choices.has(selected) ? selected : location.origin;
+    renderShareAddress(picker.value);
+  }
+  if ($('#shareNetworkStatus')) $('#shareNetworkStatus').textContent = status;
+  try {
+    const r = await api("/api/models/configs");
+    const { ok, data } = await safeJson(r);
+    if (!ok) return;
+    const models = (data.items || []).filter(m => m.enabled).map(m => m.model_id);
+    const box = $("#shareModels");
+    if (box) {
+      $("#shareModelCount").textContent = models.length;
+      box.innerHTML = models.length
+        ? models.map(m => `<span class="px-2 py-0.5 rounded-full text-[11px] bg-emerald-50 text-emerald-700 border border-emerald-100 font-mono">${esc(m)}</span>`).join("")
+        : '<span class="text-xs text-slate-400">未配置模型白名单（放行全部模型）</span>';
+    }
+  } catch (e) {}
+}
+function renderShareAddress(origin) {
   // 两个 SDK 对 base_url 的约定不同，必须分别给出：
   //   OpenAI 系    -> origin + "/v1"（SDK 自己拼 /chat/completions）
   //   Anthropic 系 -> origin        （SDK 自己拼 /v1/messages，再带 /v1 会变成 /v1/v1/messages）
   // 两者共用同一批 Key 与配额。
-  const origin = location.origin;
   const base = origin + "/v1";
   if ($("#shareBaseUrl")) $("#shareBaseUrl").textContent = base;
   if ($("#shareBaseUrlClaude")) $("#shareBaseUrlClaude").textContent = origin;
@@ -3890,19 +4272,6 @@ async function loadShareInfo() {
       "  -d '{\"model\":\"claude-sonnet-4-5-20250929\",\"max_tokens\":1024," +
       "\"messages\":[{\"role\":\"user\",\"content\":\"你好\"}]}'";
   }
-  try {
-    const r = await api("/api/models/configs");
-    const { ok, data } = await safeJson(r);
-    if (!ok) return;
-    const models = (data.items || []).filter(m => m.enabled).map(m => m.model_id);
-    const box = $("#shareModels");
-    if (box) {
-      $("#shareModelCount").textContent = models.length;
-      box.innerHTML = models.length
-        ? models.map(m => `<span class="px-2 py-0.5 rounded-full text-[11px] bg-emerald-50 text-emerald-700 border border-emerald-100 font-mono">${esc(m)}</span>`).join("")
-        : '<span class="text-xs text-slate-400">未配置模型白名单（放行全部模型）</span>';
-    }
-  } catch (e) {}
 }
 function renderKeyPage(p) {
   const term = (_keyTerm = ($("#keySearch") ? $("#keySearch").value : "").trim().toLowerCase());
@@ -3945,10 +4314,12 @@ async function openAddKey(){
   openModal(`
     <h3 class="font-bold mb-3"><i class="fa-solid fa-key mr-1"></i> 创建 API Key</h3>
     <input id="kName" class="w-full border rounded-lg px-3 py-2 mb-2 text-sm" placeholder="名称（可选）" />
-    <label class="flex items-center gap-2 text-sm mb-2"><input id="kUnlimited" type="checkbox" /> 不限额（∞）</label>
-    <input id="kLimit" type="number" min="0" class="w-full border rounded-lg px-3 py-2 mb-2 text-sm" placeholder="积分限额（credits）" />
+    <label class="flex items-center gap-2 text-sm mb-2"><input id="kUnlimited" type="checkbox" checked onchange="if(this.checked) document.getElementById('kLimit').value=''" /> 不限额（∞，默认）</label>
+    <input id="kLimit" type="number" min="0" class="w-full border rounded-lg px-3 py-2 mb-2 text-sm" placeholder="留空不限额；填写 0 表示零额度" oninput="document.getElementById('kUnlimited').checked=this.value.trim()===''" />
     <input id="kMaxConcurrent" type="number" min="0" class="w-full border rounded-lg px-3 py-2 mb-1 text-sm" placeholder="并发上限（空=全局，0=不限）" title="key 并发≠账号在途上限（ADMIN_POOL_MAX_IN_FLIGHT）" />
-    <p class="text-[11px] text-slate-400 mb-2">并发：空=全局默认；0=不限；N=最多 N 路。与账号在途上限相互独立。</p>
+    <p class="text-[11px] text-slate-400 mb-2">并发：空=全局默认；0=不限；N=此 Key 所有对话合计最多 N 个在途请求，每个对话可同时发出多个请求。</p>
+    <input id="kRatePerMinute" type="number" min="0" class="w-full border rounded-lg px-3 py-2 mb-1 text-sm" placeholder="每分钟请求数（空=全局，0=不限）" />
+    <p class="text-[11px] text-slate-400 mb-2">频率与并发独立。提高并发不会提高每分钟请求额度；积分不限额也不会解除流量限制。</p>
     <div class="mb-2">
       <label class="text-xs text-slate-500">模型分组（可选）</label>
       <div class="mt-1">${uiSelectHTML("kGroup", {
@@ -3966,10 +4337,11 @@ async function openAddKey(){
     </div>`);
 }
 async function submitAddKey(){
-  const unlimited = $("#kUnlimited").checked;
+  const unlimited = $("#kUnlimited").checked || $("#kLimit").value.trim() === "";
   const mcRaw = $("#kMaxConcurrent").value;
+  const rpmRaw = $("#kRatePerMinute").value;
   const body = { name:$("#kName").value||"", unlimited, credit_limit: Number($("#kLimit").value||0), note:$("#kNote").value||"", group_id: Number(uiSelectValue("kGroup")||0), account_id: Number(uiSelectValue("kAccount")||0),
-    max_concurrent: mcRaw === "" ? null : Number(mcRaw) };
+    max_concurrent: mcRaw === "" ? null : Number(mcRaw), rate_per_minute: rpmRaw === "" ? null : Number(rpmRaw) };
   const r = await api("/api/keys",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
   const d = await r.json().catch(()=>({}));
   if(r.ok){
@@ -4041,13 +4413,16 @@ async function editKey(id){
 
     ${keyAccountSelect("ekAccount", accountOptions, k.account_id)}
     <label class="block text-xs text-slate-500 mb-1">积分限额（credits）</label>
-    <input id="ekLimit" type="number" min="0" class="w-full border rounded-lg px-3 py-2 mb-3 text-sm" value="${k.unlimited ? 0 : k.credit_limit}" placeholder="积分限额" />
-    <label class="flex items-center gap-2 text-sm mb-1"><input id="ekUnlimited" type="checkbox" ${k.unlimited ? "checked" : ""} /> 不限额（∞）</label>
+    <input id="ekLimit" type="number" min="0" class="w-full border rounded-lg px-3 py-2 mb-3 text-sm" value="${k.unlimited ? "" : k.credit_limit}" placeholder="留空不限额；填写 0 表示零额度" oninput="document.getElementById('ekUnlimited').checked=this.value.trim()===''" />
+    <label class="flex items-center gap-2 text-sm mb-1"><input id="ekUnlimited" type="checkbox" onchange="if(this.checked) document.getElementById('ekLimit').value=''" ${k.unlimited ? "checked" : ""} /> 不限额（∞）</label>
     <label class="flex items-center gap-2 text-sm mb-2"><input id="ekReset" type="checkbox" /> 重置已用额度（当前 ${k.credit_used}）</label>
 
     <label class="block text-xs text-slate-500 mb-1">并发上限</label>
     <input id="ekMaxConcurrent" type="number" min="0" class="w-full border rounded-lg px-3 py-2 mb-1 text-sm" value="${k.max_concurrent == null ? "" : k.max_concurrent}" placeholder="空=全局，0=不限" title="key 并发≠账号在途上限（ADMIN_POOL_MAX_IN_FLIGHT）" />
-    <p class="text-[11px] text-slate-400 mb-2">空=全局默认；0=不限；N=最多 N 路。与账号在途上限相互独立。</p>
+    <p class="text-[11px] text-slate-400 mb-2">空=全局默认；0=不限；N=此 Key 所有对话合计最多 N 个在途请求，每个对话可同时发出多个请求。</p>
+    <label class="block text-xs text-slate-500 mb-1">每分钟请求数</label>
+    <input id="ekRatePerMinute" type="number" min="0" class="w-full border rounded-lg px-3 py-2 mb-1 text-sm" value="${k.rate_per_minute == null ? "" : k.rate_per_minute}" placeholder="空=全局，0=不限" />
+    <p class="text-[11px] text-slate-400 mb-2">频率与并发独立。提高并发不会提高每分钟请求额度；积分不限额也不会解除流量限制。</p>
 
     <div class="flex justify-end gap-2 mt-2"><button onclick="closeModal()" class="px-3 py-1.5 rounded-lg border text-sm">取消</button>
     <button onclick="submitEditKey(${id})" class="px-3 py-1.5 rounded-lg btn-primary">保存</button></div>`);
@@ -4057,13 +4432,15 @@ async function submitEditKey(id){
   const name = ($("#ekName").value || "").trim();
   if (!name) { toast("名称不能为空", "err"); return; }
   const mcRaw = $("#ekMaxConcurrent").value;
+  const rpmRaw = $("#ekRatePerMinute").value;
   const body = {
     name,
     group_id: Number(uiSelectValue("ekGroup") || 0),
     account_id: Number(uiSelectValue("ekAccount") || 0),
     credit_limit: Number($("#ekLimit").value || 0),
-    unlimited: $("#ekUnlimited").checked,
+    unlimited: $("#ekUnlimited").checked || $("#ekLimit").value.trim() === "",
     max_concurrent: mcRaw === "" ? null : Number(mcRaw),
+    rate_per_minute: rpmRaw === "" ? null : Number(rpmRaw),
     reset_used: $("#ekReset").checked,
   };
   const r = await api("/api/keys/"+id,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
@@ -4076,6 +4453,45 @@ async function deleteKey(id){ if(!await uiConfirm({message:"确认删除该 Key�
 /* ==================== 模型配置 ==================== */
 const MODEL_BUSY_LABELS = {idle:'空闲', normal:'空闲', busy:'轻微拥堵', congested:'极度拥堵', unavailable:'不可用', unknown:'未知'};
 let _modelBusy = {}, _modelBusyTimer = null, _modelBusyLoading = false;
+let _modelHealth = {}, _modelProbes = {}, _modelProbeBusy = false;
+async function loadModelHealth() {
+  try {
+    const response = await api('/api/stats/model-health');
+    if (!response.ok) throw new Error('无法读取模型健康状态');
+    const result = await response.json();
+    _modelHealth = Object.fromEntries((result.items || []).map(row => [row.model, row]));
+    renderModelPage(_modelPage);
+  } catch (error) { toast(error.message, 'err'); }
+}
+function modelHealthCell(model) {
+  const row = _modelHealth[model] || {}, probe = _modelProbes[model];
+  const ms = value => value == null ? '—' : Math.round(value) + ' ms';
+  const ttft = row.ttfb_ms || {};
+  const health = row.requests ? `成功 ${(100 * row.success_rate).toFixed(1)}% · ${row.requests} 次` : '暂无调用样本';
+  return `<div class="model-health-cell"><span>${health}</span>
+    <small title="最近 24 小时成功调用首字延迟，包含网络、上游排队与推理耗时">首字 P50 ${ms(ttft.p50)} / P95 ${ms(ttft.p95)}</small>
+    <small title="P95 与 P50 的差值，反映请求延迟波动，不等同于网络 RTT 抖动">延迟波动 ${ms(ttft.p95 == null ? null : ttft.p95 - ttft.p50)} · 可用 ${row.available_accounts ?? '—'} 账号</small>
+    ${probe ? `<small title="${esc(fmtTime(probe.observed_at))}">检测：${ms(probe.ttft_ms)} · 响应头 ${ms(probe.headers_ms)}</small><small title="增量到达间隔的标准差，包含模型生成与网络传输">输出间隔波动 ${ms(probe.inter_delta_jitter_ms)}</small>` : ''}</div>`;
+}
+function applyModelDisplay(options) {
+  $('#modelShowMultiplier').checked = options.show_multiplier;
+  $('#modelShowBusy').checked = options.show_busy;
+  const parts = ['model-id'];
+  if (options.show_multiplier) parts.push('×1.25');
+  if (options.show_busy) parts.push('空闲');
+  $('#modelNamePreview').textContent = 'name: ' + parts.join(' · ');
+}
+async function saveModelDisplay() {
+  const fields = [$('#modelShowMultiplier'), $('#modelShowBusy')];
+  const options = {show_multiplier:fields[0].checked, show_busy:fields[1].checked};
+  fields.forEach(field => { field.disabled = true; });
+  try {
+    const response = await api('/api/models/display', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(options)});
+    if (!response.ok) throw new Error('展示设置保存失败');
+    applyModelDisplay(await response.json());
+  } catch (error) { toast(error.message, 'err'); }
+  finally { fields.forEach(field => { field.disabled = false; }); }
+}
 function modelBusyBadge(m) {
   const state = _modelBusy[m.model_id] || {};
   const level = Object.prototype.hasOwnProperty.call(MODEL_BUSY_LABELS, state.busy_level) ? state.busy_level : 'unknown';
@@ -4115,12 +4531,13 @@ function modelRow(m) {
     <tr class="border-t hover:bg-slate-50">
       <td class="px-4 py-3 font-mono text-xs">${esc(m.model_id)}</td>
       <td class="px-4 py-3">${m.level==='system'?'<span class="px-2 py-0.5 rounded text-[10px] bg-blue-100 text-blue-700">系统</span>':'<span class="px-2 py-0.5 rounded text-[10px] bg-purple-100 text-purple-700">用户</span>'}</td>
-      <td class="px-4 py-3">${multDisplay}</td>
-      <td class="px-4 py-3 whitespace-nowrap">${modelBusyBadge(m)}</td>
+      <td class="px-4 py-3 model-mult-column">${multDisplay}</td>
+      <td class="px-4 py-3 whitespace-nowrap model-busy-column">${modelBusyBadge(m)}</td>
+      <td class="px-4 py-3">${modelHealthCell(m.model_id)}</td>
       <td class="px-4 py-3 text-slate-400 text-xs">${esc(m.note||'-')}</td>
       <td class="px-4 py-3 col-status">${m.enabled?'<span class="badge bg-emerald-100 text-emerald-700">启用</span>':'<span class="badge bg-slate-100 text-slate-500">禁用</span>'}</td>
       <td class="px-4 py-3 text-right whitespace-nowrap">
-        <button onclick="speedTestModel(${JSON.stringify(m.model_id)}, this)" class="text-sky-600 hover:text-sky-800 text-sm mr-2" title="测速（用账号池直接请求上游，免 Key）"><i class="fa-solid fa-gauge-high"></i></button>
+        <button onclick="speedTestModel(${esc(JSON.stringify(m.model_id))}, this)" class="text-sky-600 hover:text-sky-800 text-sm mr-2" title="检测模型延迟与健康（真实请求，可能消耗少量积分）"><i class="fa-solid fa-gauge-high"></i></button>
         <button onclick="toggleModel(${m.id},${!m.enabled})" class="${m.enabled?'text-amber-600 hover:text-amber-800':'text-emerald-600 hover:text-emerald-800'} text-sm mr-2" title="${m.enabled?'禁用':'启用'}"><i class="fa-solid ${m.enabled?'fa-ban':'fa-check'}"></i></button>
         <button onclick="deleteModelConfig(${m.id})" class="text-red-500 hover:text-red-700" title="移除"><i class="fa-solid fa-trash"></i></button>
       </td>
@@ -4159,6 +4576,11 @@ function sortModelData(list){
 async function loadModels(){
   const r = await api("/api/models/configs"); if(!r.ok) return;
   const d = await r.json();
+  try {
+    const display = await api('/api/models/display');
+    if (display.ok) applyModelDisplay(await display.json());
+  } catch (_) {}
+  loadModelHealth();
   _modelData = d.items || [];
   // 恢复上次停留的页码与排序（浏览器刷新 / 操作后保持）
   try { _modelPage = parseInt(localStorage.getItem("wb_model_page") || "1") || 1; } catch(e) {}
@@ -4180,7 +4602,7 @@ function renderModelPage(p) {
   try { localStorage.setItem("wb_model_page", String(p)); } catch(e) {}
   const slice = data.slice((p - 1) * PS, p * PS);
   $("#modelBody").innerHTML = slice.map(modelRow).join("") ||
-    `<tr><td colspan="7" class="px-4 py-8 text-center text-slate-400">${term ? "无匹配的模型" : "还没有模型配置，点击「从后端同步模型」拉取可用模型列表"}</td></tr>`;
+    `<tr><td colspan="8" class="px-4 py-8 text-center text-slate-400">${term ? "无匹配的模型" : "还没有模型配置，点击「从后端同步模型」拉取可用模型列表"}</td></tr>`;
   $("#modelPager").innerHTML = pagerHtml(total, p, totalPages, "renderModelPage");
 }
 async function syncModels(){
@@ -4200,26 +4622,36 @@ async function toggleModel(id, enabled){
 }
 async function deleteModelConfig(id){ if(!await uiConfirm({message:"确认移除该模型配置？移除后该模型将被过滤。", title:"移除模型配置"}))return; const r=await api("/api/models/"+id,{method:"DELETE"}); toast(r.ok?"已移除":"失败",r.ok?"ok":"err"); if(r.ok) loadModels(); }
 async function enableAllModels(enabled){
+  if (_modelBatchBusy) return;
+  if (!await uiConfirm({title:enabled?'全部启用模型':'全部禁用模型', message:enabled?'启用全部系统模型？':'禁用后所有系统模型将无法被调用。继续？', danger:!enabled})) return;
+  _modelBatchBusy = true;
+  try {
   const r = await api("/api/models/batch-toggle",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled,level:"system"})});
   const d = await r.json().catch(()=>({}));
   toast(`${enabled?'启用':'禁用'}了 ${d.updated||0} 个模型`, r.ok?"ok":"err");
   if(r.ok) loadModels();
+  } catch(e) { toast(e.message, 'err'); }
+  finally { _modelBatchBusy = false; }
 }
+let _modelBatchBusy = false;
 async function speedTestModel(modelId, btn){
-  if(btn && btn.disabled) return;
+  if(_modelProbeBusy || (btn && btn.disabled)) return;
+  _modelProbeBusy = true;
   const old = btn ? btn.innerHTML : "";
   if(btn){ btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>'; }
   try{
     const r = await api("/api/models/speed-test",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:modelId})});
     const d = await r.json();
     if(!r.ok){ toast(`测速失败(${modelId}): ${esc(d.detail||"")}`,"err"); return; }
+    _modelProbes[modelId] = d;
+    await loadModelHealth();
     const ttft = d.ttft_ms!=null ? d.ttft_ms+"ms" : "—";
     const sp = d.speed_tps!=null ? d.speed_tps+" t/s" : "—";
     const comp = d.completion_tokens!=null ? d.completion_tokens : (d.total_tokens??0);
     const prompt = d.prompt_tokens!=null ? d.prompt_tokens : "—";
     toast(`<b>${esc(modelId)}</b> 测速：首字 ${ttft} · 提示 ${prompt} / 补全 ${comp} tok · ${sp}` + (d.account?` · 账号 ${esc(d.account)}`:""), "ok");
   }catch(e){ toast("测速异常: "+e.message,"err"); }
-  finally{ if(btn){ btn.disabled=false; btn.innerHTML = old; } }
+  finally{ _modelProbeBusy = false; if(btn){ btn.disabled=false; btn.innerHTML = old; } }
 }
 
 /* ==================== 线上同步设置 ==================== */
@@ -4737,6 +5169,7 @@ const _scheduleRequests = new Set();
 // 任务类型 -> 人话名称。结果里有 summary 就用它，这样每个任务都统一可读。
 // keepalive_tokens 是既有任务（保活）但两张表都漏了它，显得像"未知任务"。
 const TASK_LABELS = {
+  claim_benefits: "每日检查并领取权益",
   daily_checkin: "每日签到领取积分",
   refresh_balances: "刷新平台总积分",
   refresh_credits: "更新积分到期快照",
@@ -4888,7 +5321,9 @@ function showScheduleResult(id){
 }
 async function loadSchedules(){
   const r = await api("/api/schedules"); if(!r.ok) return; const d = await r.json();
+  const previous = new Map(_schedules.map(row => [row.id, row.last_result]));
   _schedules = d.items||[];
+  if (_schedules.some(row => previous.has(row.id) && previous.get(row.id) !== row.last_result)) loadAccounts();
   clearTimeout(_schedulePollTimer);
   if(_schedules.some(s => { try { return JSON.parse(s.last_result||"{}").running; } catch(e) { return false; } })){
     _schedulePollTimer = setTimeout(() => loadSchedules(), 4000);
@@ -4925,6 +5360,7 @@ async function runSchedule(id){
     if(r.ok){ toast(d.result?.running ? "任务在后台执行，结果会自动刷新" : "运行完成"); }
     else { toast("运行失败: "+(d.detail||""),"err"); }
     await loadSchedules();
+    await loadAccounts();
   } finally { _scheduleRequests.delete(id); }
 }
 async function toggleSchedule(id){ await api("/api/schedules/"+id+"/toggle",{method:"POST"}); loadSchedules(); }
@@ -4992,10 +5428,271 @@ let _logPage = 1, _logPageSize = 20;
 let _logOpts = { accounts: [] };
 let _logBeforeId = null;      // keyset 游标
 let _logSelReady = false;
+let _logLoadSeq = 0, _logActivityBusy = false;
+let _logUsageRevision = null, _logUsageDirty = false, _logUsageBusy = false, _logUsageAt = 0;
+let _logActivityEpoch = 0;
+let _logSummaryDirty = true, _logSummaryAt = 0, _logSummaryBusy = false, _logSummarySeq = 0;
+const _logFolded = {activity:false, summary:false};
+function applyLogCard(name) {
+  const activity = name === 'activity';
+  const body = $(activity ? '#requestActivityContent' : '#logSummary');
+  const button = $(activity ? '#requestActivityToggle' : '#logSummaryToggle');
+  if (body) body.hidden = _logFolded[name];
+  if (button) {
+    button.setAttribute('aria-expanded', String(!_logFolded[name]));
+    button.querySelector('[data-fold-label]').textContent = _logFolded[name] ? '展开 ▾' : '收起 ▴';
+  }
+  // 折叠 = 不看 = 立刻断开推送连接。连接不断，服务端每帧仍要采样，
+  // 折叠后这些开销全是白烧的。
+  if (activity) syncLogActivityStream();
+}
+function toggleLogCard(name) {
+  if (!(name in _logFolded)) return;
+  _logFolded[name] = !_logFolded[name];
+  try { localStorage.setItem('wb_log_fold_'+name, String(_logFolded[name])); } catch(e) {}
+  applyLogCard(name);
+  if (!_logFolded[name]) {
+    if (name === 'activity') startLogActivity();
+    else loadLogSummary();
+  }
+}
+function logFilterSignature() {
+  return JSON.stringify(['logModel','logKey','logIp','logStart','logEnd','logResult'].map(id=>$('#'+id)?.value || '').concat([uiSelectValue('logDaysSel'),uiSelectValue('logAccountSel')]));
+}
+
+function stopLogActivity() {
+  ++_logActivityEpoch;
+  stopLogActivityStream();
+}
+function requestPhaseLabel(phase) {
+  if (/gateway_wait_concurrent/.test(phase)) return '等待此 Key 的并发空位';
+  if (/gateway_wait_requests_per_minute/.test(phase)) return '等待此 Key 的频率额度';
+  if (/send_request_body/.test(phase)) return '上传到上游';
+  if (/receive_response_headers/.test(phase)) return '等待上游首响应';
+  if (/receive_response_body/.test(phase)) return '接收上游响应';
+  if (/read_request_body|client_upload/.test(phase)) return '接收客户端请求';
+  if (/select_account/.test(phase)) return '选择账号';
+  if (/account_session|headers_for_attempt/.test(phase)) return '准备账号';
+  if (/backoff/.test(phase)) return '等待重试';
+  if (/admission/.test(phase)) return '检查请求准入';
+  if (/record_usage/.test(phase)) return '记录用量';
+  return '处理中';
+}
+function requestActivityRow(r, active) {
+  const reason = r.reason || '';
+  const label = active ? requestPhaseLabel(r.phase || '') :
+    reason === 'concurrent_requests' ? '并发已满' :
+    reason === 'requests_per_minute' ? '频率超限' :
+    r.outcome === 'disconnected' ? '客户端断开' :
+    r.outcome === 'completed' ? '已结束' : r.outcome === 'http_error' ? '请求失败' : '请求中断';
+  const color = active ? 'var(--warn)' : r.outcome === 'completed' ? 'var(--ok)' : 'var(--danger)';
+  // 在途请求的「已耗时」由浏览器本地走表：若让服务端每秒为它推一帧，
+  // 一条长连接就退化成 1 秒轮询，正好是这次要消灭的开销。
+  const elapsed = active
+    ? `<span data-start="${esc(r.started_at || '')}">${(Number(r.elapsed_ms || 0)/1000).toFixed(1)}s</span>`
+    : `${(Number(r.elapsed_ms || 0)/1000).toFixed(1)}s`;
+  return `<tr><td class="text-xs whitespace-nowrap">${fmtTime(r.started_at)}</td>
+    <td class="text-xs">${esc(r.key_name || '—')}</td><td class="font-mono text-xs">${esc(r.model || '尚未读取模型')}</td>
+    <td class="text-xs whitespace-nowrap" style="color:${color}" title="${esc(reason)}">${esc(label)}${!active && r.status ? ' · HTTP '+Number(r.status) : ''}</td>
+    <td class="text-xs whitespace-nowrap">${elapsed}</td>
+    <td class="text-xs">${Number(r.upstream_attempts || 0)} 次</td><td class="text-xs font-mono" title="${esc(r.path || '')}">${esc((r.request_id || '').slice(0,12))}</td></tr>`;
+}
+
+// 在途行的耗时本地刷新（1 秒一次，纯文本改动，不重建表格）。
+let _activityElapsedTimer = null;
+function tickRequestActivityElapsed() {
+  const box = $('#requestActivity');
+  if (!box || document.hidden) return;
+  const now = Date.now();
+  box.querySelectorAll('span[data-start]').forEach(span => {
+    const started = Date.parse(span.dataset.start);
+    if (!isFinite(started)) return;
+    span.textContent = ((now - started) / 1000).toFixed(1) + 's';
+  });
+}
+function ensureActivityElapsedTicker() {
+  if (_activityElapsedTimer) return;
+  _activityElapsedTimer = setInterval(tickRequestActivityElapsed, 1000);
+}
+
+/* ==========================================================================
+   「请求动态」的推送通道（SSE），替代原来的「每 3 秒轮询」
+   --------------------------------------------------------------------------
+   轮询的代价不只是「一次 HTTP」：一个开着的日志面板每小时 1200 次请求，
+   每次都带完整请求头、走鉴权、进线程池、做一次 SQL 采样、再序列化 JSON，
+   而绝大多数时候什么都没变。它不会堵死 /v1/chat（那边是独立 async 流式
+   端点），但会持续占用线程池与数据库连接的份额。
+
+   现在：一条长连接，没变化只发一行心跳，有变化才推一帧；折叠卡片/切走面板/
+   标签页隐藏 → 直接 abort，服务端同步停止采样。
+
+   为什么不是 WebSocket：数据是单向事件流，SSE 足够；WebSocket 还要求
+   uvicorn 装 ws 库、反向代理显式转发 Upgrade/Connection，漏一条就是
+   「连不上」。SSE 就是普通 HTTP GET，还能继续用请求头鉴权。
+   ========================================================================== */
+let _logActivityStream = null;      // 当前 EventSource
+let _logActivityStreamKey = null;   // 当前连接所带的 Key 筛选（变了要重连）
+let _logActivityOpening = null;     // 正在换票据/建连的 Key（防重入建双连接）
+let _logActivityPollTimer = null;   // 兜底轮询（推送不可用时）
+let _logActivityRetryAt = 0;
+
+function logActivityWanted() {
+  return !_logFolded.activity
+    && document.documentElement.dataset.activeTab === 'logs'
+    && !document.hidden
+    && !!TOKEN;
+}
+
+function stopLogActivityStream() {
+  if (_logActivityStream) { try { _logActivityStream.close(); } catch (e) {} }
+  _logActivityStream = null;
+  _logActivityStreamKey = null;
+  _logActivityOpening = null;
+  if (_logActivityPollTimer) { clearTimeout(_logActivityPollTimer); _logActivityPollTimer = null; }
+  if (_activityElapsedTimer) { clearInterval(_activityElapsedTimer); _activityElapsedTimer = null; }
+}
+
+/** 按当前状态决定：该连、该断、还是该换（Key 筛选变了）。 */
+function syncLogActivityStream() {
+  const key = ($('#logKey') ? $('#logKey').value : '').trim();
+  if (!logActivityWanted()) { stopLogActivityStream(); return; }
+  if (_logActivityStream && _logActivityStreamKey === key) return;
+  // 换票据是异步的：期间若又触发 sync（activateTab + applyLogCard 连续调用），
+  // 必须认准同一个在建连接，否则会同时建两条流。
+  if (_logActivityOpening === key) return;
+  stopLogActivityStream();
+  // 推送刚失败过（代理不转发 SSE / 连接数满）→ 先用低频轮询顶上，
+  // 过一会儿再试推送。不无限重连：连续失败会把浏览器和服务端一起拖住。
+  if (Date.now() < _logActivityRetryAt) { scheduleLogActivityPoll(); return; }
+  openLogActivityStream(key);
+}
+
+function openLogActivityStream(key) {
+  if (!window.EventSource) { scheduleLogActivityPoll(); return; }
+  _logActivityOpening = key;
+  const epoch = _logActivityEpoch;
+  // EventSource 不能自定义请求头，而管理员 JWT 绝不能进 URL（会进访问日志）。
+  // 所以先用普通请求（带 X-Admin-Token）换一张 2 分钟、只读的一次性票据。
+  api('/api/logs/requests/ticket').then(r => safeJson(r)).then(({ok, data}) => {
+    if (_logActivityOpening !== key) return;    // 期间被取消或换了筛选
+    _logActivityOpening = null;
+    if (epoch !== _logActivityEpoch || !logActivityWanted()) return;
+    if (!ok || !data.ticket) throw new Error(data.detail || '票据获取失败');
+    const qs = new URLSearchParams({limit: '40', ticket: data.ticket});
+    if (key) qs.set('key', key);
+    const source = new EventSource('/api/logs/requests/stream?' + qs.toString());
+    _logActivityStream = source;
+    _logActivityStreamKey = key;
+    source.addEventListener('activity', ev => {
+      if (epoch !== _logActivityEpoch || !logActivityWanted()) return;
+      let payload;
+      try { payload = JSON.parse(ev.data); } catch (e) { return; }
+      renderRequestActivity(payload);
+    });
+    // 服务端到点收尾前会先发这一帧：票据已过期，必须换新的再连。
+    source.addEventListener('reauth', () => {
+      if (epoch !== _logActivityEpoch) return;
+      _logActivityRetryAt = 0;
+      stopLogActivityStream();
+      if (logActivityWanted()) syncLogActivityStream();
+    });
+    source.onerror = () => {
+      if (epoch !== _logActivityEpoch) return;
+      // 浏览器在 CONNECTING 时会自己重连（服务端 30 分钟收尾即为此）；
+      // 只有彻底 closed 才退到低频轮询，且 60 秒后再试推送。
+      if (source.readyState === 2) {
+        _logActivityRetryAt = Date.now() + 60000;
+        stopLogActivityStream();
+        if (logActivityWanted()) {
+          const hint = $('#requestActivityHint');
+          if (hint) hint.textContent = '实时推送不可用，已切换为低频刷新';
+          scheduleLogActivityPoll();
+        }
+      }
+    };
+  }).catch(() => {
+    _logActivityOpening = null;
+    if (epoch !== _logActivityEpoch) return;
+    _logActivityRetryAt = Date.now() + 60000;
+    scheduleLogActivityPoll();
+  });
+}
+
+/** 兜底：推送通道不可用时的低频轮询（15 秒，比原来的 3 秒省 80%）。 */
+function scheduleLogActivityPoll() {
+  if (_logActivityPollTimer) clearTimeout(_logActivityPollTimer);
+  if (!logActivityWanted()) return;
+  _logActivityPollTimer = setTimeout(async () => {
+    _logActivityPollTimer = null;
+    if (!logActivityWanted()) return;
+    await loadRequestActivity();
+    if (Date.now() >= _logActivityRetryAt) syncLogActivityStream();
+    else scheduleLogActivityPoll();
+  }, 15000);
+}
+
+/** 进入日志面板：建立推送（或兜底轮询）并拉一次当前数据。 */
+function startLogActivity() {
+  if (!logActivityWanted()) return;
+  syncLogActivityStream();
+  loadRequestActivity();
+}
+
+// 标签页切后台/回来都按「还看不看」重新决定连接：后台没人看却仍每帧采样
+// 是纯浪费，且浏览器可能已把那条连接节流到半死 —— 重建更干净。
+document.addEventListener('visibilitychange', syncLogActivityStream);
+
+/** 渲染一帧请求动态（推送与兜底轮询共用，保证两处口径一致）。 */
+function renderRequestActivity(data) {
+  const box = $('#requestActivity'), hint = $('#requestActivityHint');
+  if (!box || _logFolded.activity) return;
+  const active = data.active || [], recent = data.recent || [];
+  if (hint) {
+    hint.textContent = `正在处理 ${data.active_count || 0} 路 · 最近 ${recent.length} 条结果`
+      + (data.degraded ? ' · 数据源暂时不可用' : '') + ` · ${new Date().toLocaleTimeString()}`;
+  }
+  const html = active.length || recent.length
+    ? `<table class="tbl" style="min-width:820px"><thead><tr><th>开始时间</th><th>Key</th><th>模型</th><th>状态 / 当前阶段</th><th>已耗时</th><th>上游尝试</th><th>请求编号</th></tr></thead><tbody>${active.map(x=>requestActivityRow(x,true)).join('')}${recent.map(x=>requestActivityRow(x,false)).join('')}</tbody></table>`
+    : '<div class="empty">当前没有在途请求或近期请求结果。结束记录从此功能启用后开始保存。</div>';
+  // 只在内容真的变了才写 DOM：每帧重建整张表会让滚动条一直跳。
+  if (box.dataset.sig !== html) {
+    box.innerHTML = html;
+    box.dataset.sig = html;
+  }
+  ensureActivityElapsedTicker();
+  if (_logUsageRevision !== null && data.usage_revision !== _logUsageRevision) {
+    _logUsageDirty = true;
+    _logSummaryDirty = true;
+  }
+  if (data.usage_revision != null) _logUsageRevision = data.usage_revision;
+  if ((_logUsageDirty || Date.now()-_logUsageAt >= 15000) && _logPage === 1 && !_logUsageBusy && _logSelReady) {
+    _logUsageBusy = true;
+    Promise.resolve(loadLogs(1, true)).finally(() => { _logUsageBusy = false; });
+  }
+  if (_logSummaryDirty && !_logFolded.summary && Date.now()-_logSummaryAt >= 30000) loadLogSummary(true);
+}
+
+async function loadRequestActivity() {
+  if (_logActivityBusy || document.hidden || document.documentElement.dataset.activeTab !== 'logs') return;
+  _logActivityBusy = true;
+  const epoch = _logActivityEpoch;
+  const hint = $('#requestActivityHint');
+  const key = ($('#logKey')?.value || '').trim();
+  try {
+    const r = await api('/api/logs/requests?' + new URLSearchParams({key, limit:'40', include_history:'true'}));
+    const {ok, data} = await safeJson(r);
+    if (!ok) throw new Error('请求动态读取失败');
+    if (epoch !== _logActivityEpoch || document.hidden || document.documentElement.dataset.activeTab !== 'logs' || key !== ($('#logKey')?.value || '').trim()) return;
+    renderRequestActivity(data);
+  } catch(e) {
+    if (hint && epoch === _logActivityEpoch) hint.textContent = '实时更新暂时失败，稍后自动重试';
+  } finally { _logActivityBusy = false; }
+}
 
 /** 只渲染一次：账号与时间范围两个下拉。 */
 function initLogSelects() {
   if (_logSelReady) return;
+  fillLogFilterOptions();
   const daysBox = $("#logDaysSel");
   if (daysBox) daysBox.outerHTML = uiSelectHTML("logDaysSel", {
     value: "1",
@@ -5050,6 +5747,7 @@ function _logQuery() {
   const fast = $("#logFastMode") ? $("#logFastMode").checked : false;
 
   const p = new URLSearchParams({ page: _logPage, page_size: _logPageSize });
+  if ($("#logResult")?.value) p.set("result", $("#logResult").value);
   if (accountId) p.set("account_id", accountId);
   if (model) p.set("model", model);
   if (key) p.set("key", key);
@@ -5078,14 +5776,20 @@ function _logQuery() {
   return { qs: p.toString(), conds };
 }
 
-async function loadLogs(page) {
+async function loadLogs(page, silent = false) {
+  const loadSeq = ++_logLoadSeq;
   initLogSelects();
   if (!_logSelReady) return;
   if (!_logOpts.accounts.length) await loadLogAccounts();
+  if (loadSeq !== _logLoadSeq) return;
   _logPage = page || 1;
   if (_logPage === 1) _logBeforeId = null;   // 回到第一页即重置游标
 
   const { qs, conds } = _logQuery();
+  const filterSignature = logFilterSignature();
+  const revision = _logUsageRevision;
+  const params = new URLSearchParams(qs);
+  if (silent) params.set('with_total', 'false');
   const hint = $("#logFilterHint");
   if (hint) {
     if (conds.length) {
@@ -5095,21 +5799,28 @@ async function loadLogs(page) {
   }
 
   const body = $("#logBody");
-  if (body) body.innerHTML = `<tr><td colspan="9" class="px-4 py-8 text-center" style="color:var(--fg-subtle)">加载中...</td></tr>`;
+  if (body && !silent) body.innerHTML = `<tr><td colspan="9" class="px-4 py-8 text-center" style="color:var(--fg-subtle)">加载中...</td></tr>`;
   let d;
   try {
-    const r = await api("/api/logs?" + qs);
+    const r = await api("/api/logs?" + params);
     const { ok, data } = await safeJson(r);
+    if (loadSeq !== _logLoadSeq || filterSignature !== logFilterSignature()) return;
     if (!ok) {
-      if (body) body.innerHTML = `<tr><td colspan="9" class="px-4 py-8 text-center text-red-500">加载失败：${esc(data.detail || "")}</td></tr>`;
+      if (body && !silent) body.innerHTML = `<tr><td colspan="9" class="px-4 py-8 text-center text-red-500">加载失败：${esc(data.detail || "")}</td></tr>`;
       return;
     }
     d = data;
   } catch (e) {
-    if (body) body.innerHTML = `<tr><td colspan="9" class="px-4 py-8 text-center text-red-500">加载异常：${esc(String(e && e.message || e))}</td></tr>`;
+    if (loadSeq !== _logLoadSeq) return;
+    if (body && !silent) body.innerHTML = `<tr><td colspan="9" class="px-4 py-8 text-center text-red-500">加载异常：${esc(String(e && e.message || e))}</td></tr>`;
     return;
   }
-  fillLogDatalists();
+  fillLogFilterOptions();
+  const stats = d.stats;
+  if (revision === _logUsageRevision) _logUsageDirty = false;
+  _logUsageAt = Date.now();
+  $('#logStats').textContent = stats ? `当前筛选 · 共 ${stats.total} 次 · 成功 ${stats.success} 次 · 错误 ${stats.error} 次` : silent ? '用量记录已实时更新 · 总数统计请点击查询' : '快速翻页未统计总数';
+  if (_logPage === 1 && !silent) loadLogSummary();
 
   const fast = $("#logFastMode") ? $("#logFastMode").checked : false;
   const total = d.total;              // null = 本次未统计
@@ -5172,24 +5883,68 @@ function logRow(l) {
     <td class="text-xs text-right">${credHtml}</td>
     <td>${latencyHtml}</td>
     <td class="text-xs" style="color:var(--fg-muted)" title="透传给上游的 X-Agent-Purpose">${esc((l.use_case||'—').slice(0,14))}</td>
-    <td>${statusHtml}</td>
+    <td><button type="button" class="console-btn quiet" onclick="openUsageDetail(${Number(l.id)})" title="查看调用详情">${statusHtml} 详情</button></td>
   </tr>`;
 }
 
+function renderMobileRuntime(d) {
+  if (!d || (!d.android_runtime && !d.event_loop_stalls?.length && !(d.event_loop_lag_ms >= 1000))) return '';
+  const a = d.android_runtime;
+  return `<div class="limit-note"><p><b>手机服务运行状态</b></p>
+    <p>事件循环最大延迟：${((d.event_loop_lag_ms || 0)/1000).toFixed(3)} 秒${d.event_loop_lag_ms >= 1000 ? '（本地处理曾停顿，不能仅凭此判定为上游超时）' : ''}</p>
+    ${a ? `<p>${esc(a.manufacturer || '')} ${esc(a.device_model || '')} · Android SDK ${Number(a.android_sdk) || '—'} · 服务代次 ${Number(a.service_revision) || '—'}</p>
+    <p>电池优化：${a.battery_unrestricted ? '已允许不受限制' : '未豁免'} · 后台限制：${a.background_restricted ? '已限制' : '系统未报告限制'} · 屏幕：${a.interactive ? '亮屏' : '息屏'}</p>
+    <p>省电模式：${a.power_save ? '开启' : '关闭'} · 系统休眠：${a.device_idle ? '是' : '否'} · CPU 保活：${a.wake_lock ? '持有' : '未持有'}</p>
+    <p>网络：${a.wifi ? 'Wi-Fi' : a.cellular ? '移动网络' : a.network_available ? '其他网络' : '未连接'} · 系统联网校验：${a.network_validated ? '通过' : '未通过'}</p>` : ''}
+    ${(d.event_loop_stalls || []).map(s => `<details><summary>停顿采样：${(Number(s.paused_ms)/1000).toFixed(3)} 秒 · 期间进程 CPU ${(Number(s.process_cpu_ms)/1000).toFixed(3)} 秒</summary><pre class="whitespace-pre-wrap break-all">${esc((s.stack || []).join('\n'))}</pre></details>`).join('')}</div>`;
+}
+
+async function openUsageDetail(id) {
+  try {
+    const response = await api('/api/logs/' + Number(id));
+    const {ok, data} = await safeJson(response);
+    if (!ok) { toast(data.detail || '读取详情失败', 'err'); return; }
+    const d = data.diagnostic;
+    const json = d ? JSON.stringify(d, null, 2) : '这条历史记录没有保存请求详情，无法恢复当时的上游响应。';
+    openModal(`<h3 class="font-semibold text-lg mb-3">调用详情 · ${esc(data.model)}</h3>
+      <p>账号：${esc(data.account_name)} · 网关分类：${esc(data.error_kind || '未记录')}</p>
+      ${d?.gateway_error ? `<div class="limit-note"><p>网关本地拒绝（未请求上游）：</p><pre class="whitespace-pre-wrap break-all">${esc(d.gateway_error)}</pre></div>` : ""}
+      ${d?.diagnostic_truncated ? '<p class="limit-note">诊断内容过长，部分消息已截断。</p>' : ''}
+      ${renderMobileRuntime(d)}
+      ${d ? `<p>请求编号：${esc(d.id || '—')} · 网关 HTTP：${Number(d.status) || '记账时尚未发送响应头'}</p><p>网关处理结果：${Number(d.gateway_result_status) || '—'}${d.status === 200 && d.error_kind && d.error_kind !== 'success' ? '（响应头已发送 200，随后处理失败）' : ''}</p>
+      ${(d.account_policy_events || []).map(e => `<div class="limit-note"><p>账号 #${Number(e.account_id)} · ${esc(e.model || '')} · 网关分类：${esc(e.kind)}</p><p>上游 HTTP：${Number(e.http_status) || '未收到 HTTP 响应'} · 上游 code：${esc(e.upstream_code ?? '未提供')}</p><p>上游 msg：${esc(e.upstream_message ?? '未提供')}</p>${e.message_truncated || e.raw_truncated ? '<p>消息过长，以下内容已截断。</p>' : ''}${e.upstream_raw != null ? `<p>上游响应原文（凭据脱敏）：</p><pre class="whitespace-pre-wrap break-all">${esc(e.upstream_raw)}</pre>` : ''}</div>`).join('')}
+      ${(d.network_errors || []).map(e => `<div class="limit-note"><p>本地网络异常 · 账号 #${Number(e.account_id) || '—'} · ${esc(e.phase || '')}</p><pre class="whitespace-pre-wrap break-all">${esc(e.message)}</pre><p>${e.http_status ? '已收到上游 HTTP ' + Number(e.http_status) + '，随后传输中断。' : '未收到响应，没有可展示的上游 HTTP / code / msg。'}</p></div>`).join('')}
+      ${d.connection_recoveries ? `<p>已尝试新连接恢复：${Number(d.connection_recoveries)} 次</p>` : ''}` : ''}
+      <details class="mt-3"><summary>完整诊断 JSON</summary><pre class="whitespace-pre-wrap break-all text-xs">${esc(json)}</pre></details>
+      <textarea id="usageDiagnosticText" hidden></textarea><div class="flex gap-2 mt-3"><button class="console-btn quiet" onclick="copyText('#usageDiagnosticText')">复制详情</button><button class="console-btn quiet" onclick="closeModal()">关闭</button></div>`, 'max-w-3xl');
+    document.getElementById('usageDiagnosticText').value = JSON.stringify(data, null, 2);
+  } catch (error) { toast('读取详情失败', 'err'); }
+}
+
 /** 按账号汇总表：回答「这个号用了多少」，不用翻几十页去数。 */
-async function loadLogSummary() {
+async function loadLogSummary(silent = false) {
   const box = $("#logSummary");
   const hint = $("#logSummaryHint");
-  if (!box) return;
+  _logSummaryDirty = true;
+  if (!box || _logFolded.summary || (silent && _logSummaryBusy)) return;
+  const seq = ++_logSummarySeq;
+  const filterSignature = logFilterSignature();
+  _logSummaryBusy = true;
+  _logSummaryAt = Date.now();
   const days = parseInt(uiSelectValue("logDaysSel") || "1", 10) || 1;
   const accountId = uiSelectValue("logAccountSel") || "";
-  box.innerHTML = `<div class="fs-12 py-3" style="color:var(--fg-subtle)">加载中...</div>`;
+  if (!silent) box.innerHTML = `<div class="fs-12 py-3" style="color:var(--fg-subtle)">加载中...</div>`;
   try {
-    const r = await api(`/api/logs/summary?days=${days}` + (accountId ? `&account_id=${accountId}` : ""));
+    const filters = new URLSearchParams(_logQuery().qs);
+    ['page','page_size','before_id','with_total'].forEach(k => filters.delete(k));
+    filters.set('days', '0');
+    const r = await api('/api/logs/summary?' + filters);
     const { ok, data } = await safeJson(r);
+    if (seq !== _logSummarySeq || filterSignature !== logFilterSignature() || _logFolded.summary) return;
     if (!ok) { box.innerHTML = `<div class="empty">加载失败：${esc(data.detail || "")}</div>`; return; }
     const items = data.items || [];
-    if (hint) hint.textContent = `近 ${data.range_days} 天 · ${items.length} 个账号 · 合计 ${fmtCredit(data.total_credits)} 积分`;
+    _logSummaryDirty = false;
+    if (hint) hint.textContent = `当前筛选 · ${data.account_count} 个账号 · 成功 ${data.ok_requests} / 错误 ${data.failed_requests} · ${fmtCredit(data.total_credits)} 积分${data.unattributed_requests ? ` · ${data.unattributed_requests} 次未记录账号 / 未选号` : ""}`;
     if (!items.length) { box.innerHTML = `<div class="empty">该时间范围内没有账号产生请求。</div>`; return; }
     const maxC = Math.max(1, ...items.map(x => x.credits));
     box.innerHTML = `<table class="tbl" style="min-width:820px">
@@ -5209,38 +5964,44 @@ async function loadLogSummary() {
           <td><div class="pkg-track" style="margin:0"><i style="width:${Math.max(2, x.credits/maxC*100)}%"></i></div></td>
         </tr>`).join("")}</tbody></table>`;
   } catch (e) {
-    box.innerHTML = `<div class="empty">加载异常：${esc(String(e && e.message || e))}</div>`;
-  }
+    if (!silent && seq === _logSummarySeq) box.innerHTML = `<div class="empty">加载异常：${esc(String(e && e.message || e))}</div>`;
+  } finally { if (seq === _logSummarySeq) _logSummaryBusy = false; }
 }
 
 function resetLogFilters() {
+  WBFilterCombobox.close();
   uiSelectSet("logAccountSel", "");
   uiSelectSet("logDaysSel", "1");
-  ["logModel", "logKey", "logIp", "logStart", "logEnd"].forEach(id => {
-    const el = document.getElementById(id); if (el) el.value = "";
+  ["logModel", "logKey", "logIp", "logStart", "logEnd", "logResult"].forEach(id => {
+    const el = document.getElementById(id); if (el) { el.value = ""; el.dispatchEvent(new Event('change', {bubbles:true})); }
   });
   const f = $("#logFastMode"); if (f) f.checked = false;
   _logBeforeId = null;
   loadLogAccounts().then(() => { loadLogSummary(); loadLogs(1); });
 }
 
-/** 进入日志面板时的入口（三个请求并行，避免串行等待）。 */
+/** 进入日志面板时恢复折叠状态，后台只做轻量增量检查。 */
 function openLogsPanel() {
+  stopLogActivity();
+  _logUsageRevision = null;
+  _logUsageDirty = false;
+  for (const name of Object.keys(_logFolded)) {
+    try { _logFolded[name] = localStorage.getItem('wb_log_fold_'+name) === 'true'; } catch(e) {}
+    applyLogCard(name);
+  }
+  // 折叠状态是持久化的，所以这里不能再无条件拉一次：
+  // applyLogCard('activity') 已按折叠状态决定连不连推送。
+  startLogActivity();
   _logBeforeId = null;
-  Promise.all([loadLogAccounts(), loadLogSummary()]).then(() => loadLogs(1));
+  loadLogAccounts().then(() => loadLogs(1));
 }
 
-function fillLogDatalists(){
-  const set = (id, arr) => {
-    const dl = document.getElementById(id);
-    if(!dl) return;
-    dl.innerHTML = arr.map(v => `<option value="${esc(v)}">`).join("");
-  };
-  set("logModelList", _modelData.map(m => m.model_id).filter(Boolean));
-  set("logKeyList", _keyData.map(k => k.name).filter(Boolean));
+function fillLogFilterOptions(){
+  WBFilterCombobox.attach('logModel', _modelData.map(m => m.model_id));
+  WBFilterCombobox.attach('logKey', _keyData.map(k => k.name));
 }
 
-async function exportLogs(){
+async function exportLogs(diagnostics = false){
   const days = parseInt(uiSelectValue("logDaysSel") || "1", 10) || 0;
   const accountId = uiSelectValue("logAccountSel") || "";
   const model = ($("#logModel") ? $("#logModel").value : "").trim();
@@ -5257,6 +6018,8 @@ async function exportLogs(){
   else if(days > 0) params.push("start=" + encodeURIComponent(
     new Date(Date.now() - days*86400000).toISOString().slice(0,19).replace("T"," ")));
   if(end) params.push("end=" + encodeURIComponent(end + " 23:59:59"));
+  if ($('#logResult')?.value) params.push('result=' + encodeURIComponent($('#logResult').value));
+  if (diagnostics) params.push('diagnostics=true&limit=1000');
   const qs = params.length ? ("?" + params.join("&")) : "";
   toast("正在导出 CSV...", "ok");
   try {
@@ -5556,6 +6319,7 @@ function trendChart(rows) {
  * Key/模型/端点三个筛选下拉的选项来自「窗口内真实出现过的值」。 */
 let _usageSelReady = false;
 let _usageFilterReady = false;
+let _usageLoadGeneration = 0;
 // 筛选下拉的选项缓存。声明必须在使用它的 _usageQuery / loadUsageFilterOptions
 // **之前**：虽是顶层 let（会被提升到 TDZ），但函数可能在任何位置被调用，
 // 声明靠后容易踩「Cannot access before initialization」。放前面最省心。
@@ -5576,8 +6340,14 @@ function initUsageSelects() {
       { value: "14", label: "近 14 天" },
       { value: "30", label: "近 30 天" },
       { value: "90", label: "近 90 天" },
+      { value: "custom", label: "自定义日期" },
     ],
-    onChange: () => { loadUsageFilterOptions(); loadUsageStats(); },
+    onChange: async value => {
+      if (value === "custom") return;
+      for (const id of ["usageStart", "usageEnd"]) { $("#" + id).value = ""; window.WBDateTimePicker?.sync(id); }
+      _usageFilterReady = false;
+      await loadUsageFilterOptions(); loadUsageStats();
+    },
   });
   const gBox = $("#usageGrainSel");
   if (gBox) gBox.outerHTML = uiSelectHTML("usageGrainSel", {
@@ -5588,19 +6358,48 @@ function initUsageSelects() {
     ],
     onChange: () => loadUsageStats(),
   });
+  for (const id of ["usageStart", "usageEnd"]) {
+    $("#" + id).addEventListener("change", () => {
+      _usageFilterReady = false;
+      if ($("#usageStart").value || $("#usageEnd").value) uiSelectSet("usageDaysSel", "custom");
+      else uiSelectSet("usageDaysSel", "1");
+    });
+  }
+}
+
+function _usageDatesValid() {
+  const start = $("#usageStart").value, end = $("#usageEnd").value;
+  return !start || !end || start <= end;
+}
+function _usageTimeParams() {
+  const start = $("#usageStart").value, end = $("#usageEnd").value;
+  const params = new URLSearchParams();
+  if (start || end) {
+    if (start) params.set("start", new Date(start + "T00:00:00").toISOString());
+    if (end) params.set("end", new Date(end + "T23:59:59.999").toISOString());
+  } else params.set("days", String(Number(uiSelectValue("usageDaysSel")) || 1));
+  return params;
+}
+async function applyUsageDates() {
+  if (!_usageDatesValid()) return toast("开始日期不能晚于结束日期", "err");
+  _usageFilterReady = false;
+  await loadUsageFilterOptions();
+  await loadUsageStats();
 }
 
 // 渲染 Key/模型/端点筛选下拉。
 // 选项只列窗口内真实出现过的值 —— 否则下拉里塞满从没用过的模型，
 // 选中后筛出空结果，用户会以为"功能坏了"。
 async function loadUsageFilterOptions() {
-  const days = uiSelectValue("usageDaysSel") || 1;
+  if (!_usageDatesValid()) return;
+  const windowQuery = _usageTimeParams().toString();
   let opts = { models: [], use_cases: [], keys: [] };
   try {
-    const r = await api(`/api/stats/usage/options?days=${days}`);
+    const r = await api('/api/stats/usage/options?' + windowQuery);
     const { ok, data } = await safeJson(r);
     if (ok) opts = data || opts;
   } catch (e) { /* 选项拉取失败不阻塞统计展示 */ }
+  if (windowQuery !== _usageTimeParams().toString()) return;
   _usageOpts = opts;
 
   // 保留当前选择；但若该值本次不在选项里（换了时间窗后消失），
@@ -5646,26 +6445,31 @@ async function loadUsageFilterOptions() {
 function resetUsageFilters() {
   // 必须走 uiSelectSet：下拉的真实状态在 _uiSelectMap 里，
   // 直接改 DOM 的 dataset 只会让标签变了、筛选值还在。
-  uiSelectSet("usageKeySel", "");
-  uiSelectSet("usageModelSel", "");
-  uiSelectSet("usageCaseSel", "");
+  uiSelectSet("usageKeySel", "", false);
+  uiSelectSet("usageModelSel", "", false);
+  uiSelectSet("usageCaseSel", "", false);
+  uiSelectSet("usageDaysSel", "1", false);
+  for (const id of ["usageStart", "usageEnd"]) { $("#" + id).value = ""; window.WBDateTimePicker?.sync(id); }
+  _usageFilterReady = false;
   loadUsageStats();
 }
 
 /* 当前筛选条件 -> query string，并生成一句人话提示 */
 function _usageQuery() {
-  const days = uiSelectValue("usageDaysSel") || 1;
   const grain = uiSelectValue("usageGrainSel") || "hour";
   const key = uiSelectValue("usageKeySel") || "";
   const model = uiSelectValue("usageModelSel") || "";
   const cs = uiSelectValue("usageCaseSel") || "";
-  const qs = new URLSearchParams({ days, granularity: grain });
+  const qs = _usageTimeParams();
+  qs.set("granularity", grain);
   if (key) qs.set("key_id", key);
   if (model) qs.set("model", model);
   if (cs) qs.set("use_case", cs);
 
   const keyName = ((_usageOpts.keys || []).find(k => String(k.id) === key) || {}).name || key;
   const conds = [];
+  const start = $("#usageStart").value, end = $("#usageEnd").value;
+  if (start || end) conds.push("日期=" + (start || "…") + " ~ " + (end || "…"));
   if (key) conds.push(`Key=${keyName}`);
   if (model) conds.push(`模型=${model}`);
   if (cs) conds.push(`端点=${cs}`);
@@ -5684,7 +6488,10 @@ function _usageEmpty(conds) {
 
 async function loadUsageStats() {
   initUsageSelects();
+  const generation = ++_usageLoadGeneration;
+  if (!_usageDatesValid()) return toast("开始日期不能晚于结束日期", "err");
   if (!_usageFilterReady) await loadUsageFilterOptions();
+  if (generation !== _usageLoadGeneration) return;
 
   const { qs, conds } = _usageQuery();
   const ov = $("#usageOverview");
@@ -5701,6 +6508,7 @@ async function loadUsageStats() {
   try {
     const r = await api(`/api/stats/usage?${qs}`);
     const { ok, data: d } = await safeJson(r);
+    if (generation !== _usageLoadGeneration) return;
     if (!ok) { if (ov) ov.innerHTML = `<div class="col-span-4 text-sm text-red-500">加载失败: ${esc(d.detail || "")}</div>`; return; }
 
     const o = d.overview || {};
@@ -5726,6 +6534,7 @@ async function loadUsageStats() {
     $("#usageEndpointChart").innerHTML = donutChart(d.by_endpoint, "credits");
     $("#usageTrendChart").innerHTML = trendChart(d.trend);
   } catch (e) {
+    if (generation !== _usageLoadGeneration) return;
     if (ov) ov.innerHTML = `<div class="col-span-4 text-sm text-red-500">加载异常: ${esc(e.message)}</div>`;
   }
 }
@@ -5749,35 +6558,52 @@ function _ensureTip() {
   if (!t) {
     t = document.createElement("div");
     t.id = "chartTip";
+    t.role = 'tooltip';
+    t.addEventListener('pointerenter', () => clearTimeout(_chartTipTimer));
+    t.addEventListener('pointerleave', hideTip);
     document.body.appendChild(t);
   }
   return t;
 }
+let _chartTipTimer = null;
 function showTip(ev, html) {
+  clearTimeout(_chartTipTimer);
   const t = _ensureTip();
   t.innerHTML = html;
   t.style.display = "block";
-  t.style.left = ev.clientX + "px";
-  t.style.top = ev.clientY + "px";
+  const r = t.getBoundingClientRect();
+  t.style.left = Math.max(8, Math.min(innerWidth - r.width - 8, ev.clientX - r.width / 2)) + 'px';
+  t.style.top = Math.max(8, Math.min(innerHeight - r.height - 8, ev.clientY > r.height + 16 ? ev.clientY - r.height - 12 : ev.clientY + 12)) + 'px';
 }
-function hideTip() {
+function dismissChartTip() {
+  clearTimeout(_chartTipTimer);
   const t = $("#chartTip");
   if (t) t.style.display = "none";
 }
-// 鼠标跟随（绑在容器上做事件委托，避免每个图形单独绑）
-document.addEventListener("mousemove", e => {
-  const t = $("#chartTip");
-  if (!t || t.style.display !== "block") return;
-  t.style.left = e.clientX + "px";
-  t.style.top = e.clientY + "px";
+function hideTip() {
+  clearTimeout(_chartTipTimer);
+  _chartTipTimer = setTimeout(() => {
+    const t = $('#chartTip'), selection = getSelection();
+    if (t?.matches(':hover') || selection && !selection.isCollapsed && t?.contains(selection.anchorNode)) return;
+    dismissChartTip();
+  }, 300);
+}
+document.addEventListener('click', e => {
+  if (!e.target.closest('#chartTip, .chart-hit')) dismissChartTip();
 });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') dismissChartTip(); });
+document.addEventListener('scroll', e => { if (!$('#chartTip')?.contains(e.target)) dismissChartTip(); }, true);
+window.addEventListener('resize', dismissChartTip);
 
 // 启动：只有 401/403 才认定 token 失效；其它错误保留登录态，
 // 否则任何一个接口偶发 500 都会把用户踢回登录页（且清掉 token）。
 if (TOKEN && !new URLSearchParams(location.search).has("desktop")) {
   api("/api/accounts").then(r => {
     if (r.ok) { enterApp(); return; }
-    if (r.status === 401 || r.status === 403) { logout(); return; }
+    if (r.status === 401 || r.status === 403) {
+      if (window.WBAndroid || window.pywebview?.api) return;
+      logout(); return;
+    }
     // 其它状态：先进应用，由各面板自己提示错误
     enterApp();
     toast("部分数据加载失败（HTTP " + r.status + "），可稍后重试", "err");
@@ -5789,6 +6615,9 @@ if (TOKEN && !new URLSearchParams(location.search).has("desktop")) {
 } else { /* 显示登录 */ }
 </script>
 <script src="/static/growth_center.js"></script>
+<script src="/static/benefits.js"></script>
+<script src="/static/date-time-picker.js"></script>
+<script src="/static/review-improvements.js"></script>
 <script src="/static/vendor/marked-12.0.2.min.js"></script>
 <script src="/static/vendor/dompurify-3.4.17.min.js"></script>
 <script src="/static/release-notes.js"></script>

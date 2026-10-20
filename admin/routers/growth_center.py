@@ -283,6 +283,17 @@ def action(aid: int, body: ActionIn, db: Session = Depends(get_db)):
                         state["checkin_day"] = today
                 data = result.get("data") or result
                 credit = int(data.get("credit_granted") or data.get("reward_credit") or data.get("credit") or 0) if result.get("ok") else 0
+                if credit > 0:
+                    from admin.routers.accounts import _sync_credit_snapshot
+                    try:
+                        balance = sess.fetch_balance()
+                        account.balance_total = int(balance.get("total") or 0)
+                        account.balance_remain = int(balance.get("remain") or 0)
+                        account.last_sync_at = datetime.utcnow()
+                        result["journal_balance_after"] = account.balance_remain
+                        _sync_credit_snapshot(account, sess.fetch_credit_details())
+                    except Exception:
+                        snapshot["resources_stale"] = True
                 message = "已完成" if result.get("ok") else "操作未确认，请刷新状态后核对"
                 if body.action == "redeem" and data.get("cards_overflow"):
                     message += f"，补登卡溢出 {data['cards_overflow']} 张"
@@ -293,6 +304,7 @@ def action(aid: int, body: ActionIn, db: Session = Depends(get_db)):
                     prize = data.get("prize") or data
                     message += "：" + str(prize.get("prize_name") or prize.get("name") or "请查看官方抽奖记录")
                 response = {"ok": bool(result.get("ok")), "credit": credit, "reason": message,
+                            "balance_after": result.get("journal_balance_after"),
                             "steps": [{"step": label, "ok": bool(result.get("ok")), "message": message, "reward": credit}]}
                 record_result(db, aid, response, source="manual", action=label)
                 _write(db, key, state)

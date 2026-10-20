@@ -68,6 +68,10 @@ def prepare() -> None:
     metadata["asset"] = "WorkBuddy2API-{version}-android-arm64.apk"
     (staging / "desktop/version.json").write_text(json.dumps(metadata), encoding="utf-8")
     shutil.copytree(ROOT / "admin/static", staging / "admin/static")
+    # admin/data/ 是运行期 read_text() 读的 JSON（上游错误文案表）。
+    # 少它 APK 启动即崩：`admin/upstream_errors.py` 导入时就要求这个文件存在。
+    if (ROOT / "admin/data").is_dir():
+        shutil.copytree(ROOT / "admin/data", staging / "admin/data")
     index = staging / "admin/static/index.html"
     index.write_text(mobile_html(index.read_text(encoding="utf-8")), encoding="utf-8")
     for name in ("mobile.js", "mobile.css", "mobile_settings.js"):

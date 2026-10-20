@@ -1,8 +1,11 @@
-"""Bounded local timing records. Never retain headers, credentials or bodies."""
+"""Bounded timings and upstream error messages; no headers or request bodies."""
 from collections import deque
+import asyncio
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
+import re
+import json
 import threading
 import time
 import uuid
@@ -11,6 +14,117 @@ current = ContextVar('local_request_timing', default=None)
 _lock = threading.Lock()
 _recent = deque(maxlen=40)
 _active = {}
+
+
+def safe_error_text(value):
+    text = str(value)
+    text = re.sub(r'(?i)\bBearer\s+[^\s,;\"\']+', 'Bearer [redacted]', text)
+    text = re.sub(r'\bsk-[A-Za-z0-9_-]+', '[redacted-key]', text)
+    text = re.sub(r'\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+', '[redacted-token]', text)
+    text = re.sub(r'''(?i)((?:["']?)(?:access[_-]?token|refresh[_-]?token|token|password|secret|authorization|api[_-]?key|auth)(?:["']?)\s*[:=]\s*["']?)[^\s,}"']+''', r'\1[redacted]', text)
+    text = re.sub(r'(https?://)[^\s/@]+:[^\s/@]+@', r'\1[redacted]@', text)
+    text = re.sub(r'(https?://[^\s?]+)\?[^\s]+', r'\1?[redacted]', text)
+    return text[:4096]
+
+
+def exception_text(error):
+    chain, seen = [], set()
+    while error is not None and id(error) not in seen and len(chain) < 5:
+        seen.add(id(error))
+        message = safe_error_text(error).strip()
+        chain.append(type(error).__name__ + (': ' + message if message else ''))
+        # Network libraries suppress low-level socket/SSL errors in their public
+        # message. Keep the bounded, redacted chain for diagnosis as well.
+        error = error.__cause__ or error.__context__
+    return ' <- '.join(chain)[:4096]
+
+
+def mark_attempt(account_id, model):
+    record = current.get()
+    if record is not None:
+        with _lock:
+            record['last_account_id'] = int(account_id)
+            record['last_model'] = str(model)[:120]
+            record.pop('upstream_status', None)
+            record.pop('_network_failure_phase', None)
+
+
+def mark_upstream_response(status):
+    record = current.get()
+    if record is not None:
+        with _lock:
+            record['upstream_status'] = int(status)
+
+
+def mark_gateway_result(status):
+    record = current.get()
+    if record is not None:
+        with _lock:
+            record['gateway_result_status'] = int(status)
+
+
+def mark_gateway_error(status, detail):
+    record = current.get()
+    if record is not None:
+        with _lock:
+            record['gateway_result_status'] = int(status)
+            record['gateway_error'] = safe_error_text(json.dumps(detail, ensure_ascii=False))
+
+
+def mark_network_error(error):
+    record = current.get()
+    if record is not None:
+        event = {'type': type(error).__name__, 'message': exception_text(error),
+                 'phase': record.get('_network_failure_phase') or record.get('phase'), 'account_id': record.get('last_account_id')}
+        if record.get('upstream_status'):
+            event['http_status'] = record['upstream_status']
+        with _lock:
+            record['network_error'] = event['type']
+            events = record.setdefault('network_errors', [])
+            if len(events) < 12 and (not events or events[-1] != event):
+                events.append(event)
+
+
+def mark_connection_recovery():
+    record = current.get()
+    if record is not None:
+        with _lock:
+            record['connection_recoveries'] = record.get('connection_recoveries', 0) + 1
+            record.pop('upstream_status', None)
+            record.pop('_network_failure_phase', None)
+
+
+def usage_evidence(error_kind):
+    """Persist only bounded diagnostics; never request bodies or headers."""
+    record = current.get()
+    if record is None:
+        return None, 0
+    with _lock:
+        fields = ('id', 'path', 'started_at', 'status', 'gateway_result_status', 'gateway_error', 'upstream_status', 'upstream_error',
+                  'network_error', 'network_errors', 'connection_recoveries', 'last_account_id',
+                  'last_model', 'account_policy_events', 'upstream_attempts', 'first_delta_ms',
+                  'stages', 'request_bytes', 'upstream_uploads')
+        evidence = {key: record[key] for key in fields if key in record}
+        evidence['error_kind'] = error_kind
+        evidence['elapsed_ms'] = round((time.perf_counter()-record['_perf_start'])*1000, 1)
+        health = record.get('_runtime_health')
+        if health is not None:
+            evidence.update(health.since(record['_perf_start']))
+        encoded = json.dumps(evidence, ensure_ascii=False)
+        # MySQL TEXT is limited by bytes, including multi-byte messages. Never
+        # lose the entire usage row because a verbose failure exceeds it.
+        if len(encoded.encode('utf-8')) > 60000:
+            evidence['diagnostic_truncated'] = True
+            for history in ('network_errors', 'account_policy_events'):
+                evidence[history] = [dict(event) for event in evidence.get(history, [])]
+                for event in evidence[history]:
+                    for field in ('message', 'upstream_message', 'upstream_raw'):
+                        value = event.get(field)
+                        if isinstance(value, str) and len(value) > 256:
+                            event[field] = value[:256]
+                            event['message_truncated'] = True
+            encoded = json.dumps(evidence, ensure_ascii=False)
+        return encoded, record.get('last_account_id', 0)
 
 
 def add_stage(name, milliseconds):
@@ -62,6 +176,7 @@ def network_trace():
                                'ConnectError', 'ReadError', 'WriteError', 'RemoteProtocolError'}
                     if category != 'CancelledError':
                         with _lock:
+                            record['_network_failure_phase'] = label
                             record['network_error'] = category if category in allowed else 'TransportError'
     return trace
 
@@ -108,6 +223,38 @@ def mark_upstream_error(kind, status=None):
                 record['upstream_status'] = status
 
 
+def mark_account_policy(account_id, model, kind, status, code, *, message=None, cool_until=None,
+                        breaker_until=None, degrade_until=None, raw=None):
+    """Keep bounded routing evidence and original messages, excluding request data."""
+    record = current.get()
+    if record is None:
+        return
+    event = {'account_id': int(account_id), 'kind': kind, 'http_status': status}
+    if kind == 'transport' and not status and record.get('upstream_status'):
+        event['http_status'] = record['upstream_status']
+    if isinstance(model, str) and re.fullmatch(r'[\w./:-]{1,120}', model, re.ASCII):
+        event['model'] = model
+    value = str(code) if code is not None else ''
+    if value:
+        event['upstream_code'] = value[:128]
+    if isinstance(message, str):
+        event['upstream_message'] = safe_error_text(message)
+        if len(message) > 4096:
+            event['message_truncated'] = True
+    if status and raw is not None:
+        event['upstream_raw'] = safe_error_text(raw)
+        if len(str(raw)) > 4096:
+            event['raw_truncated'] = True
+    for name, until in (('cool_until', cool_until), ('breaker_until', breaker_until),
+                        ('degrade_until', degrade_until)):
+        if isinstance(until, datetime):
+            event[name] = until.isoformat(timespec='seconds') + 'Z'
+    with _lock:
+        history = record.setdefault('account_policy_events', [])
+        if len(history) < 12:
+            history.append(event)
+
+
 def set_phase(name):
     record = current.get()
     if record is not None:
@@ -115,10 +262,60 @@ def set_phase(name):
             record['phase'] = name
 
 
+def activity_snapshot(paths, key_ids=None, limit=100):
+    """Copy only bounded display fields; leave diagnostic histories untouched."""
+    fields = ('id', 'key_id', 'path', 'requested_model', 'started_at', 'status',
+              'outcome', 'phase', 'request_error', 'network_error', 'upstream_error',
+              'upstream_attempts')
+    def visible(record):
+        return (record.get('key_id') and record.get('path') in paths
+                and (key_ids is None or record['key_id'] in key_ids))
+    def copy(record):
+        result = {key: record.get(key) for key in fields}
+        result['elapsed_ms'] = record['total_ms'] if record['total_ms'] is not None else round((time.perf_counter()-record['_perf_start'])*1000, 1)
+        return result
+    with _lock:
+        active = [record for record in _active.values() if visible(record)]
+        return {'active_count': len(active), 'active': [copy(r) for r in active[:limit]],
+                'recent': [copy(r) for r in reversed(_recent) if visible(r)][:limit]}
+
+
+def activity_live_signature(paths, limit=100):
+    """In-memory only: has anything worth re-rendering changed?
+
+    The SSE stream uses this to decide **whether to touch the database at all**.
+    A cheap "no" here keeps an idle panel at zero queries instead of one per
+    second. Deliberately excludes the running clock (`elapsed_ms`) — otherwise
+    every in-flight second would look like a change; the browser recomputes
+    elapsed time locally between frames.
+    """
+    parts = []
+    with _lock:
+        for record in _active.values():
+            if not (record.get('key_id') and record.get('path') in paths):
+                continue
+            parts.append('%s/%s/%s' % (record.get('id'), record.get('phase'),
+                                       record.get('status')))
+            if len(parts) >= limit:
+                break
+        recent = []
+        for record in reversed(_recent):
+            if not (record.get('key_id') and record.get('path') in paths):
+                continue
+            recent.append('%s/%s' % (record.get('id'), record.get('outcome')))
+            if len(recent) >= limit:
+                break
+    return '|'.join(sorted(parts)) + '#' + '|'.join(recent)
+
+
 def snapshot():
     def copy(record):
         result = {key: value for key, value in record.items() if not key.startswith('_')}
         result['stages'] = [dict(stage) for stage in record['stages']]
+        if 'account_policy_events' in record:
+            result['account_policy_events'] = [dict(event) for event in record['account_policy_events']]
+        if 'network_errors' in record:
+            result['network_errors'] = [dict(event) for event in record['network_errors']]
         health = record.get('_runtime_health')
         if health is not None:
             result.update(health.since(record['_perf_start']))
@@ -130,14 +327,15 @@ def snapshot():
 
 
 class TimingMiddleware:
-    def __init__(self, app):
+    def __init__(self, app, persist=False):
         self.app = app
+        self.persist = persist
 
     async def __call__(self, scope, receive, send):
         if scope['type'] != 'http' or not scope.get('path', '').startswith('/v1/'):
             return await self.app(scope, receive, send)
         start = time.perf_counter()
-        record = {'id': uuid.uuid4().hex[:10], 'path': scope['path'],
+        record = {'id': uuid.uuid4().hex, 'path': scope['path'],
                   'method': scope.get('method', ''),
                   'started_at': datetime.now(timezone.utc).isoformat(timespec='milliseconds'),
                   'status': None, 'headers_ms': None, 'first_body_ms': None, 'total_ms': None,
@@ -194,7 +392,9 @@ class TimingMiddleware:
                 add_stage('client_send_wait', (time.perf_counter()-began)*1000)
         try:
             await self.app(scope, timed_receive, timed_send)
-        except BaseException:
+        except BaseException as error:
+            if not record.get('request_error'):
+                record['request_error'] = 'request_cancelled' if isinstance(error, asyncio.CancelledError) else 'gateway_exception'
             if record['outcome'] == 'active':
                 record['outcome'] = 'interrupted'
             raise
@@ -202,9 +402,11 @@ class TimingMiddleware:
             record['total_ms'] = round((time.perf_counter()-start)*1000, 1)
             if record['request_error'] == 'client_disconnected':
                 record['outcome'] = 'disconnected'
-            elif record['stream_error'] or (record['status'] or 0) >= 400:
+            elif (record['stream_error'] or (record['status'] or 0) >= 400
+                  or record.get('upstream_error') not in (None, 'success')):
                 record['outcome'] = 'http_error'
-            elif record['terminal_sent'] or (record['response_complete'] and not record['streaming']):
+            elif record['terminal_sent'] or (record['response_complete'] and
+                    (not record['streaming'] or record.get('upstream_error') == 'success')):
                 record['outcome'] = 'completed'
             elif record['streaming'] and record['response_complete']:
                 record['outcome'] = 'interrupted'
@@ -215,4 +417,10 @@ class TimingMiddleware:
                     record.update(record.pop('_runtime_health').since(start))
                 _active.pop(record['id'], None)
                 _recent.append(record)
-            current.reset(token)
+            try:
+                if self.persist and record.get('key_id'):
+                    from admin.gateway_limits import _finish_thread
+                    from admin.request_audit import save
+                    await _finish_thread(save, record)
+            finally:
+                current.reset(token)

@@ -20,7 +20,9 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from typing import Literal
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -28,6 +30,7 @@ from admin import credits as credit_rules
 from admin.db import get_db
 from admin.models import Account, UsageLog
 from admin.security import require_admin
+from admin.selection_order import ordered_accounts
 
 router = APIRouter(prefix="/api/credits", tags=["credits"])
 
@@ -94,6 +97,7 @@ def _account_row(acc: Account, snapshot: dict, next_n: int = 4) -> dict:
         "account_name": acc.name or acc.uid or f"账号#{acc.id}",
         "uid": acc.uid or "",
         "status": acc.status or "active",
+        "selection_priority": acc.selection_priority,
         "balance_remain": int(acc.balance_remain or 0),
         "total_remaining": round(float(snapshot.get("total_remaining") or 0), 4),
         "total_capacity": round(float(snapshot.get("total_capacity") or 0), 4),
@@ -164,7 +168,9 @@ def credit_expiry_stats(
     # （`admin.credits.urgency_rank`）。这里刻意不自己再写一遍排序规则 ——
     # 两处口径一旦漂移，用户会看到「界面排第一的号」并不是「下一个被选中的号」，
     # 从而认为调度坏了。
-    rows.sort(key=credit_rules.urgency_rank)
+    selection_accounts = ordered_accounts(db.query(Account).all())
+    positions = {a.id: i for i, a in enumerate(selection_accounts)}
+    rows.sort(key=lambda row: positions[row['account_id']])
 
     total_remaining = sum(r["total_remaining"] for r in rows)
     expiring_soon = sum(r["expiring_soon_remaining"] for r in rows)
@@ -249,6 +255,8 @@ def credit_expiry_stats(
         },
         "windows": windows,
         "accounts": rows,
+        "selection_mode": 'manual' if any(a.selection_priority is not None for a in selection_accounts) else 'automatic',
+        "selection_order": [a.id for a in selection_accounts],
         # 分页的逐包列表；packages_total 在 summary 里
         "packages": page,
         "packages_total": len(flat),
@@ -256,6 +264,31 @@ def credit_expiry_stats(
         "package_limit": package_limit,
         "has_more": package_offset + len(page) < len(flat),
     }
+
+
+class SelectionOrderIn(BaseModel):
+    mode: Literal['manual', 'automatic'] = 'manual'
+    ids: list[int] = []
+    expected_ids: list[int]
+    confirm: bool = False
+
+
+@router.post('/selection-order')
+def save_selection_order(body: SelectionOrderIn, _: bool = Depends(require_admin),
+                         db: Session = Depends(get_db)):
+    if not body.confirm:
+        raise HTTPException(400, '请确认：此操作会改变真实账号的使用优先级')
+    accounts = db.query(Account).order_by(Account.id).with_for_update().all()
+    current = [a.id for a in ordered_accounts(accounts)]
+    if current != body.expected_ids:
+        raise HTTPException(409, '账号或排序已变化，请刷新后重试')
+    if body.mode == 'manual' and (len(body.ids) != len(current) or set(body.ids) != set(current)):
+        raise HTTPException(400, '排序必须包含全部账号且不能重复')
+    positions = {account_id: i for i, account_id in enumerate(body.ids)}
+    for account in accounts:
+        account.selection_priority = positions[account.id] if body.mode == 'manual' else None
+    db.commit()
+    return {'ok': True, 'mode': body.mode, 'ids': [a.id for a in ordered_accounts(accounts)]}
 
 
 @router.get("/usage")
