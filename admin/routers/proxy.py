@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -361,9 +362,9 @@ def _session_headers(body: dict, uid: str) -> dict:
         h["X-Root-Request-ID"] = digest[:32]
         trace = digest[:32]
     else:
-        trace = hashlib.sha256(f"{time.time_ns()}:{uid}".encode()).hexdigest()[:32]
+        trace = secrets.token_hex(16)
     # 消息级 ID：每条独立（32 hex，与官方 X-Request-ID 形态一致）
-    mid = hashlib.sha256(f"{time.time_ns()}:{uid}:msg".encode()).hexdigest()[:32]
+    mid = secrets.token_hex(16)
     h["X-Conversation-Message-ID"] = mid
     h["X-Request-ID"] = mid
     # span id 为 16 hex（8 字节），trace id 为 32 hex（16 字节）—— OTEL 规范。

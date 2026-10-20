@@ -360,12 +360,14 @@ def _sync_credit_snapshot(acc: Account, packages: list[dict]) -> dict:
 
 
 def _remember_upstream_error(acc: Account, error) -> dict:
-    raw = getattr(error, 'raw_body', str(error))
+    from admin.request_metrics import exception_text
+    safe_error = exception_text(error)
+    raw = getattr(error, 'raw_body', safe_error)
     status = getattr(error, 'http_status', 0)
     info = upstream_errors.error_info(raw, status)
     acc.last_upstream_error = json.dumps(info, ensure_ascii=False)
     acc.last_err_at = datetime.utcnow()
-    acc.last_err_msg = str(error)[:255]
+    acc.last_err_msg = safe_error[:255]
     return info
 
 

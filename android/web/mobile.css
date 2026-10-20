@@ -18,7 +18,7 @@
 .mobile-mode .api-share-row>code{overflow-wrap:anywhere;white-space:normal;word-break:break-word}
 .mobile-mode .api-share-grid>div{overflow-wrap:anywhere}
 .mobile-mode .mobile-api-help summary{font-size:12px;color:var(--brand-ink);padding:10px 0;cursor:pointer}
-.mobile-mode[data-active-tab]:not([data-active-tab="accounts"]) #overview{display:none}
+.mobile-mode[data-active-tab]:not([data-active-tab="accounts"]):not([data-active-tab="credits"]) #overview{display:none}
 .mobile-mode pre{max-width:100%;min-width:0;overflow-x:auto}
 .mobile-mode .card.overflow-x-auto{width:100%;overflow-x:auto;overscroll-behavior-x:contain}
 .mobile-mode .panel-toolbar{align-items:flex-start}

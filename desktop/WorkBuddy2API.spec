@@ -7,9 +7,8 @@ root = Path(SPECPATH).parent
 version = json.loads((root / 'desktop/version.json').read_text(encoding='utf-8'))['version']
 name = f'WorkBuddy2API-{version}-windows-x64'
 datas = [(str(root / 'admin/static'), 'admin/static'),
-         # admin/data/ 里是运行期用 read_text() 读的 JSON（上游错误文案表）。
-         # 漏打包时 EXE 一启动就 FileNotFoundError：源码运行完全正常，
-         # 只有 PyInstaller 产物才暴露，所以必须在这里显式列出。
+         # admin/data/ 是运行期用 read_text() 读的 JSON（上游错误文案表），
+         # 漏打包会让 EXE/APK 启动即 FileNotFoundError：源码运行正常，只有产物才暴露。
          (str(root / 'admin/data'), 'admin/data'),
          (str(root / 'turing_helper.js'), '.'),
          (str(root / 'desktop/version.json'), 'desktop'),

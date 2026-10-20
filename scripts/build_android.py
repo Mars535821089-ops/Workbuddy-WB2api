@@ -10,10 +10,25 @@ import secrets
 import shutil
 import subprocess
 import sys
+import venv
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 STAGING = ROOT / "android/app/build/generated/python"
+
+
+def check_runtime() -> None:
+    # Run the staged app against Android's pinned dependency versions. Gradle
+    # compilation alone cannot catch import-time FastAPI/Pydantic errors.
+    environment = ROOT / 'build/android-runtime-check'
+    python = environment / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
+    if not python.is_file():
+        venv.EnvBuilder(with_pip=True).create(environment)
+    subprocess.run([str(python), '-m', 'pip', 'install', '--disable-pip-version-check',
+                    '-r', str(ROOT / 'android/requirements.txt'), '--index-url',
+                    'https://pypi.tuna.tsinghua.edu.cn/simple'], check=True)
+    subprocess.run([str(python), str(ROOT / 'scripts/check_runtime.py'), '--android',
+                    '--source-dir', str(STAGING)], cwd=ROOT, check=True)
 
 
 def mobile_html(html: str) -> str:
@@ -34,7 +49,10 @@ def mobile_html(html: str) -> str:
     html = re.sub(r'^.*if \(name === "(?:client|settings)"\).*\n', '', html, flags=re.M)
     html = re.sub(r'<button\b[^>]*data-tab="settings".*?</button>', '', html, flags=re.S)
     html = html.replace('登录新账号，或从本机与备份中恢复已有账号。', '手机号登录或浏览器授权，账号保存在这台手机。')
-    html = html.replace('也可选择本地 .info 文件。', '也可选择本地 .info 文件。新版 Windows 加密凭证请先在电脑账号管理页导出后再导入，或使用手机号授权登录。')
+    html = html.replace('新版加密、旧版明文及 .info.bak-时间戳备份', '旧版明文及 .info.bak-时间戳备份')
+    credential_note = '<p class="text-xs text-slate-500 mb-2">新版 Windows 加密凭证请先在电脑账号管理页导出“系统明文备份”后再导入，或使用手机号授权登录。</p>'
+    for marker in ('<input id="upFile"', '<textarea id="reauthJson"'):
+        html = html.replace(marker, credential_note + marker)
     html = html.replace('<link rel="stylesheet" href="/static/desktop.css" />',
                         '<link rel="stylesheet" href="/static/desktop.css" /><link rel="stylesheet" href="/static/mobile.css" />')
     html = html.replace('</body>', '<script src="/static/mobile.js"></script><script src="/static/mobile_settings.js"></script>\n</body>')
@@ -68,10 +86,7 @@ def prepare() -> None:
     metadata["asset"] = "WorkBuddy2API-{version}-android-arm64.apk"
     (staging / "desktop/version.json").write_text(json.dumps(metadata), encoding="utf-8")
     shutil.copytree(ROOT / "admin/static", staging / "admin/static")
-    # admin/data/ 是运行期 read_text() 读的 JSON（上游错误文案表）。
-    # 少它 APK 启动即崩：`admin/upstream_errors.py` 导入时就要求这个文件存在。
-    if (ROOT / "admin/data").is_dir():
-        shutil.copytree(ROOT / "admin/data", staging / "admin/data")
+    shutil.copytree(ROOT / "admin/data", staging / "admin/data")
     index = staging / "admin/static/index.html"
     index.write_text(mobile_html(index.read_text(encoding="utf-8")), encoding="utf-8")
     for name in ("mobile.js", "mobile.css", "mobile_settings.js"):
@@ -93,6 +108,7 @@ def main() -> None:
     prepare()
     if args.prepare_only:
         return
+    check_runtime()
     env = dict(os.environ, WB_ANDROID_BUILD_PYTHON=sys.executable)
     if args.jdk:
         env["JAVA_HOME"] = str(Path(args.jdk).resolve())
