@@ -1,0 +1,21 @@
+# 每天自动把本仓库 master 与上游 xiaofan6ya/workbuddy2api 同步（fast-forward）。
+# 跑在 GitHub Actions 上，不依赖本机开机；如遇冲突会失败并留痕（本仓库无自有提交，正常情况必然快进成功）。
+name: 同步上游
+
+on:
+  schedule:
+    - cron: "0 21 * * *" # UTC 21:00 = 北京时间每天 05:00
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 同步上游 master
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api repos/jzh-1228/wb2api/merge-upstream -f branch=master
