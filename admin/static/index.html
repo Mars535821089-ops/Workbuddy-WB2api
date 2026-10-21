@@ -1680,6 +1680,7 @@ function toast(msg, type = "ok") {
 function openModal(html, widthClass) {
   $('#modal').dataset.closeOnly = '';
   const box = $("#modalBox");
+  window.WBDateTimePicker?.destroyWithin(box);
   // Reset every previous size, including the phone-login max-w-md class.
   [...box.classList].filter(name => /^max-w-/.test(name)).forEach(name => box.classList.remove(name));
   box.classList.add(widthClass || "max-w-6xl");
@@ -1692,7 +1693,7 @@ function openModal(html, widthClass) {
   $("#modal").classList.remove("hidden");
   $("#modal").classList.add("flex");
 }
-function closeModal() { window.WBPhone?.closeRegion(); $("#modal").classList.add("hidden"); $("#modal").classList.remove("flex"); }
+function closeModal() { window.WBPhone?.closeRegion(); window.WBDateTimePicker?.close(); $("#modal").classList.add("hidden"); $("#modal").classList.remove("flex"); }
 async function copyText(sel){
   const source = $(sel); if(!source) return;
   const text = source.value ?? source.textContent ?? '';
@@ -5370,22 +5371,23 @@ function scheduleTimingHTML(data){
   const modes = [['preset','系统预设'],['interval','固定间隔'],['daily','每天'],['weekly','每周'],['monthly','每月']];
   const minutes = data.interval_minutes || 60;
   const unit = [10080,1440,60,1].find(value => minutes % value === 0);
-  return `<label class="block text-sm mb-1" for="scCycle">执行周期</label>
-    <select id="scCycle" class="w-full border rounded-lg px-3 py-2 mb-2 text-sm" onchange="onScheduleCycleChange()">${modes.map(([value,label])=>`<option value="${value}" ${timing.mode===value?'selected':''}>${label}</option>`).join('')}</select>
+  return `<div class="schedule-field"><label id="scCycleLabel">执行周期</label>
+    ${uiSelectHTML('scCycle', {value:timing.mode, options:modes.map(([value,label])=>({value,label})), onChange:onScheduleCycleChange})}</div>
     <div id="scIntervalWrap" ${['preset','interval'].includes(timing.mode)?'':'hidden'}>
-      <div class="flex gap-2 mb-2"><input aria-label="执行间隔" id="scIv" type="number" min="1" max="5256000" class="w-full border rounded-lg px-3 py-2 text-sm" value="${minutes/unit}">
-      <select id="scUnit" aria-label="间隔单位" class="border rounded-lg px-3 py-2 text-sm">${[[1,'分钟'],[60,'小时'],[1440,'天'],[10080,'周']].map(([value,label])=>`<option value="${value}" ${value===unit?'selected':''}>${label}</option>`).join('')}</select></div>
+      <div class="schedule-field"><label for="scIv">执行间隔</label><div class="schedule-interval"><input aria-label="执行间隔" id="scIv" type="number" min="1" max="5256000" value="${minutes/unit}">
+      ${uiSelectHTML('scUnit', {value:String(unit), options:[[1,'分钟'],[60,'小时'],[1440,'天'],[10080,'周']].map(([value,label])=>({value:String(value),label}))})}</div></div>
     </div>
     <div id="scCalendarWrap" ${['daily','weekly','monthly'].includes(timing.mode)?'':'hidden'}>
-      <label class="block text-sm mb-1" for="scTime">执行时间（北京时间 UTC+8）</label>
-      <input id="scTime" type="time" class="w-full border rounded-lg px-3 py-2 mb-2 text-sm" value="${esc(timing.time||'09:00')}">
-      <div id="scWeekWrap" class="mb-2" ${timing.mode==='weekly'?'':'hidden'}><span class="block text-sm mb-1">执行日</span><div class="flex flex-wrap gap-2">${[...'一二三四五六日'].map((day,i)=>`<label class="text-sm"><input type="checkbox" name="scWeekday" value="${i}" ${(timing.weekdays||[0]).includes(i)?'checked':''}> 周${day}</label>`).join('')}</div></div>
-      <div id="scMonthWrap" ${timing.mode==='monthly'?'':'hidden'}><label class="block text-sm mb-1" for="scMonthday">每月几号</label><input id="scMonthday" type="number" min="1" max="31" class="w-full border rounded-lg px-3 py-2 mb-2 text-sm" value="${Number(timing.monthday)||1}"><p class="text-xs text-slate-500 mb-2">当月没有该日期时，在当月最后一天执行。</p></div>
+      <div class="schedule-field"><label for="scTimeButton">执行时间 <span class="schedule-zone">北京时间 · UTC+8</span></label>
+      <input id="scTime" aria-label="执行时间" data-timezone="北京时间 · UTC+8" type="time" value="${esc(timing.time||'09:00')}"></div>
+      <div id="scWeekWrap" class="schedule-field" ${timing.mode==='weekly'?'':'hidden'}><span id="scWeekLabel">执行日</span><div class="schedule-weekdays" role="group" aria-labelledby="scWeekLabel">${[...'一二三四五六日'].map((day,i)=>`<label class="schedule-weekday"><input type="checkbox" name="scWeekday" value="${i}" ${(timing.weekdays||[0]).includes(i)?'checked':''}><span>周${day}</span></label>`).join('')}</div></div>
+      <div id="scMonthWrap" class="schedule-field" ${timing.mode==='monthly'?'':'hidden'}><label for="scMonthday">每月几号</label><input id="scMonthday" aria-describedby="scMonthHint" type="number" min="1" max="31" value="${Number(timing.monthday)||1}"><p id="scMonthHint" class="schedule-hint">当月没有该日期时，在当月最后一天执行。</p></div>
     </div>
-    <p id="scPresetHint" class="text-xs text-slate-500 mb-3" ${timing.mode==='preset'?'':'hidden'}>沿用系统现有间隔；token 保活沿用系统配置的整点时间。选择其他周期可自定义。</p>`;
+    <p id="scPresetHint" class="schedule-hint" ${timing.mode==='preset'?'':'hidden'}>沿用系统现有间隔；token 保活沿用系统配置的整点时间。选择其他周期可自定义。</p>`;
 }
 function onScheduleCycleChange(){
-  const mode = $('#scCycle').value;
+  window.WBDateTimePicker?.close();
+  const mode = uiSelectValue('scCycle');
   $('#scIntervalWrap').hidden = !['preset','interval'].includes(mode);
   $('#scCalendarWrap').hidden = !['daily','weekly','monthly'].includes(mode);
   $('#scWeekWrap').hidden = mode !== 'weekly';
@@ -5399,25 +5401,74 @@ function scheduleForm(title, data){
   const saVal = (data.stop_after||"").slice(0,16); // 适配 <input type="datetime-local">
   const isCheckin = data.task==="daily_checkin";
   openModal(`
-    <h3 class="font-bold mb-3">${title}</h3>
-    <input id="scName" class="w-full border rounded-lg px-3 py-2 mb-2 text-sm" placeholder="任务名（留空按执行周期自动命名）" value="${esc(data.display_name && data.display_name!==data.name ? '' : (data.name||''))}" />
-    <label class="block text-sm mb-1">任务类型</label>
-    <div class="mb-2">${uiSelectHTML("scTask", { value: String(data.task || (tasks[0] && tasks[0][0]) || ""),
+    <div class="schedule-form">
+    <header class="schedule-form-head"><span class="schedule-form-icon"><i class="fa-regular fa-clock" aria-hidden="true"></i></span><div><h3>${title}</h3><p>设置任务内容与执行周期</p></div></header>
+    <div class="schedule-field"><label for="scName">任务名称 <span class="schedule-zone">可选</span></label>
+    <input id="scName" placeholder="留空按执行周期自动命名" value="${esc(data.display_name && data.display_name!==data.name ? '' : (data.name||''))}" /></div>
+    <div class="schedule-field"><label id="scTaskLabel">任务类型</label>
+    ${uiSelectHTML("scTask", { value: String(data.task || (tasks[0] && tasks[0][0]) || ""),
         options: taskOpts, onChange: () => onTaskChange() })}</div>
     ${scheduleTimingHTML(data)}
-    <p class="text-xs text-slate-500 mb-3">成长计划建议每 60 分钟巡检：逐账号补每日活跃、签到、领取旅行礼物、兑换连登奖励并使用免费抽奖次数。每天最多一次成功活跃对话；每日最多开启一批盲盒（5个以内，消耗已有能量）、抽奖5次。进度持久化，重复运行会跳过已完成项。</p>
+    <details class="schedule-help"><summary><i class="fa-regular fa-circle-question" aria-hidden="true"></i>成长计划执行说明</summary><p>成长计划建议每 60 分钟巡检：逐账号补每日活跃、签到、领取旅行礼物、兑换连登奖励并使用免费抽奖次数。每天最多一次成功活跃对话；每日最多开启一批盲盒（5个以内，消耗已有能量）、抽奖5次。进度持久化，重复运行会跳过已完成项。</p></details>
     <div id="scStopWrap" class="${isCheckin?'':'hidden'}">
-      <label class="block text-sm mb-1">停止领取时间（可选）</label>
-      <input id="scStop" type="datetime-local" class="w-full border rounded-lg px-3 py-2 mb-1 text-sm" value="${saVal}" />
-      <p class="text-xs text-slate-400 mb-2">到达该时间后停止自动领取，避免活动结束后继续请求触发风控。留空 = 不限制（活动结束会自动停止）。</p>
+      <div class="schedule-field"><label for="scStopButton">停止领取时间 <span class="schedule-zone">可选 · 本地时间</span></label>
+      <input id="scStop" aria-label="停止领取时间" type="datetime-local" value="${saVal}" />
+      <p class="schedule-hint">到达该时间后停止自动领取。留空不限制，活动结束会自动停止。</p></div>
     </div>
-    <label class="flex items-center gap-2 text-sm mb-2"><input id="scEnabled" type="checkbox" ${data.enabled?'checked':''} /> 启用</label>
-    <div class="flex justify-end gap-2 mt-2">
-      <button onclick="closeModal()" class="px-3 py-1.5 rounded-lg border text-sm">取消</button>
-      <button onclick="submitSchedule(${data.id||0})" class="px-3 py-1.5 rounded-lg btn-primary">保存</button>
-    </div>`);
+    <div class="schedule-enabled"><div><label for="scEnabled">启用任务</label><p>按设置的周期自动执行</p></div><label class="schedule-switch"><input id="scEnabled" type="checkbox" role="switch" aria-label="启用任务" ${data.enabled?'checked':''} /><span></span></label></div>
+    <footer class="schedule-form-actions">
+      <button type="button" onclick="closeModal()" class="console-btn">取消</button>
+      <button type="button" onclick="submitSchedule(${data.id||0})" class="console-btn primary">保存任务</button>
+    </footer></div>`, 'max-w-lg');
+  WBDateTimePicker.attach('scTime');
+  WBDateTimePicker.attach('scStop');
+  initScheduleSelects();
+}
+function initScheduleSelects(){
+  for(const [id,label] of [['scTask','任务类型'],['scCycle','执行周期'],['scUnit','间隔单位']]){
+    const select = document.getElementById(id), trigger = select.querySelector('.ui-select-btn');
+    trigger.tabIndex = 0; trigger.setAttribute('role','combobox');
+    trigger.setAttribute('aria-label',label); trigger.setAttribute('aria-haspopup','listbox');
+    trigger.setAttribute('aria-expanded','false'); trigger.setAttribute('aria-controls',id+'Options');
+    const panel = select.querySelector('.ui-select-panel');
+    panel.id = id+'Options'; panel.setAttribute('role','listbox'); panel.setAttribute('aria-label',label);
+    select.querySelectorAll('.ui-select-opt').forEach((option,index)=>{
+      option.id = id+'Option'+index; option.setAttribute('role','option');
+      option.setAttribute('aria-selected',String(option.classList.contains('sel')));
+    });
+    select.addEventListener('keydown',event=>{
+      const options = [...select.querySelectorAll('.ui-select-opt')];
+      const keys = ['ArrowDown','ArrowUp','Home','End','Enter',' ','Escape','Tab'];
+      if(!keys.includes(event.key)) return;
+      const opened = select.classList.contains('open');
+      if(event.key==='Tab'){ select.classList.remove('open'); return; }
+      if(event.key==='Escape'){
+        if(opened){event.preventDefault();event.stopPropagation();select.classList.remove('open');}
+        return;
+      }
+      event.preventDefault();
+      if(!opened){uiSelectToggle(id); if(event.key==='Enter'||event.key===' ') return;}
+      let index = options.findIndex(option=>option.id===trigger.getAttribute('aria-activedescendant'));
+      if(index<0) index = Math.max(0,options.findIndex(option=>option.classList.contains('sel')));
+      if(event.key==='Enter'||event.key===' '){ uiSelectPick(id,options[index].dataset.value); return; }
+      if(event.key==='Home') index=0;
+      else if(event.key==='End') index=options.length-1;
+      else index=(index+(event.key==='ArrowDown'?1:-1)+options.length)%options.length;
+      options.forEach((option,i)=>option.classList.toggle('active',i===index));
+      trigger.setAttribute('aria-activedescendant',options[index].id);
+      options[index].scrollIntoView({block:'nearest'});
+    });
+    new MutationObserver(()=>{
+      trigger.setAttribute('aria-expanded',String(select.classList.contains('open')));
+      if(!select.classList.contains('open')){
+        trigger.removeAttribute('aria-activedescendant');
+        select.querySelectorAll('.ui-select-opt').forEach(option=>{option.classList.remove('active'); option.setAttribute('aria-selected',String(option.classList.contains('sel')));});
+      }
+    }).observe(select,{attributes:true,attributeFilter:['class']});
+  }
 }
 function onTaskChange(){
+  window.WBDateTimePicker?.close();
   const v = uiSelectValue("scTask");
   const wrap = document.getElementById("scStopWrap");
   if(wrap) wrap.classList.toggle("hidden", v!=="daily_checkin");
@@ -5426,8 +5477,8 @@ function openAddSchedule(){ scheduleForm("新建定时任务", {enabled:1, inter
 function editSchedule(id){ const s=_schedules.find(x=>x.id===id); if(!s) return; scheduleForm("编辑定时任务", s); }
 async function submitSchedule(id){
   const stopRaw = ($("#scStop") ? $("#scStop").value : "").trim();
-  const body = { name:$("#scName").value, task:uiSelectValue("scTask"), interval_minutes:Number($("#scIv").value)*Number($("#scUnit").value), enabled:$("#scEnabled").checked?1:0, stop_after: stopRaw || null,
-    timing:{mode:$("#scCycle").value, time:$("#scTime").value || '09:00', monthday:Number($("#scMonthday").value), weekdays:[...document.querySelectorAll('[name=scWeekday]:checked')].map(el=>Number(el.value))} };
+  const body = { name:$("#scName").value, task:uiSelectValue("scTask"), interval_minutes:Number($("#scIv").value)*Number(uiSelectValue("scUnit")), enabled:$("#scEnabled").checked?1:0, stop_after: stopRaw || null,
+    timing:{mode:uiSelectValue("scCycle"), time:$("#scTime").value || '09:00', monthday:Number($("#scMonthday").value), weekdays:[...document.querySelectorAll('[name=scWeekday]:checked')].map(el=>Number(el.value))} };
   if(!body.timing.weekdays.length && body.timing.mode === 'weekly'){ toast('请至少选择一周中的一天','err'); return; }
   if(!body.timing.weekdays.length) body.timing.weekdays = [0];
   if(body.timing.mode === 'monthly' && !$('#scMonthday').reportValidity()) return;

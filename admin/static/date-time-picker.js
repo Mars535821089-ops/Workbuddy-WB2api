@@ -7,9 +7,10 @@ window.WBDateTimePicker = (() => {
   const sameDay = (a, b) => dayValue(a) === dayValue(b);
 
   function attach(id, endOfDay = false) {
-    if (instances.has(id)) return;
     const input = document.getElementById(id);
     if (!input) return;
+    if (instances.get(id)?.input === input) return;
+    if (instances.has(id)) destroy(id);
     input.hidden = true;
     const button = document.createElement('button');
     button.type = 'button'; button.className = 'journal-date-button';
@@ -30,13 +31,39 @@ window.WBDateTimePicker = (() => {
       '<p class="date-picker-error" role="alert" hidden>请输入有效时间：小时 0–23，分钟 0–59。</p>' +
       '<div class="date-picker-footer"><button type="button" class="console-btn quiet" data-action="clear">清除</button><button type="button" class="console-btn quiet" data-action="today">今天</button><button type="button" class="console-btn primary" data-action="apply">确定</button></div>';
     document.body.append(panel);
-    const state = {input, button, panel, endOfDay, dateOnly:input.type === 'date', selected:null, month:null};
+    const state = {input, button, panel, endOfDay, dateOnly:input.type === 'date', timeOnly:input.type === 'time', selected:null, month:null};
+    if (state.timeOnly) {
+      button.classList.add('time-only-button');
+      panel.classList.add('time-only-picker');
+      panel.querySelectorAll('.date-picker-month, .date-picker-week, .date-picker-days').forEach(el => el.hidden = true);
+      panel.querySelector('[data-action="clear"]').hidden = true;
+      const today = panel.querySelector('[data-action="today"]');
+      today.textContent = '09:00'; today.setAttribute('aria-label', '设为 09:00');
+      const time = panel.querySelector('.date-picker-time');
+      time.innerHTML = ['小时', '分钟'].map((label, index) =>
+        '<div class="time-picker-column"><span>' + label + '</span>' +
+        '<button type="button" data-step="1" data-field="' + index + '" aria-label="增加' + label + '">＋</button>' +
+        '<input type="number" min="0" max="' + (index ? 59 : 23) + '" step="1" inputmode="numeric" aria-label="' + label + '" />' +
+        '<button type="button" data-step="-1" data-field="' + index + '" aria-label="减少' + label + '">−</button></div>'
+      ).join('<span class="time-picker-colon" aria-hidden="true">:</span>');
+      const note = document.createElement('p');
+      note.className = 'time-picker-zone'; note.textContent = input.dataset.timezone || '本地时间';
+      time.after(note);
+    }
     panel.querySelector('.date-picker-time').hidden = state.dateOnly;
     instances.set(id, state);
     sync(id);
     input.addEventListener('change', () => sync(id));
     button.addEventListener('click', () => opened === state ? close() : open(state));
     panel.addEventListener('click', event => {
+      const step = event.target.closest('[data-step]');
+      if (step) {
+        const field = panel.querySelectorAll('input')[Number(step.dataset.field)];
+        const limit = Number(field.max) + 1;
+        field.value = pad(((Number(field.value) || 0) + Number(step.dataset.step) + limit) % limit);
+        panel.querySelector('.date-picker-error').hidden = true;
+        return;
+      }
       const month = event.target.closest('[data-month]');
       if (month) {
         state.month.setMonth(state.month.getMonth() + Number(month.dataset.month));
@@ -53,6 +80,12 @@ window.WBDateTimePicker = (() => {
       const action = event.target.closest('[data-action]')?.dataset.action;
       if (action === 'clear') return commit(state, '');
       if (action === 'today') {
+        if (state.timeOnly) {
+          const fields = panel.querySelectorAll('input');
+          fields[0].value = '09'; fields[1].value = '00';
+          panel.querySelector('.date-picker-error').hidden = true;
+          return;
+        }
         state.selected = new Date();
         state.month = new Date(state.selected.getFullYear(), state.selected.getMonth(), 1);
         render(state);
@@ -65,7 +98,8 @@ window.WBDateTimePicker = (() => {
           fields.find(field => field.value === '' || !field.checkValidity()).focus();
           return;
         }
-        commit(state, dayValue(state.selected) + 'T' + pad(Number(fields[0].value)) + ':' + pad(Number(fields[1].value)));
+        const time = pad(Number(fields[0].value)) + ':' + pad(Number(fields[1].value));
+        commit(state, state.timeOnly ? time : dayValue(state.selected) + 'T' + time);
       }
     });
     panel.addEventListener('keydown', event => {
@@ -91,7 +125,7 @@ window.WBDateTimePicker = (() => {
     if (!state) return;
     const value = state.input.value;
     state.button.classList.toggle('has-value', !!value);
-    state.button.textContent = value ? value.replace('T', ' ').replace(/-/g, '/') : state.dateOnly ? '选择日期' : '选择日期与时间';
+    state.button.textContent = value ? value.replace('T', ' ').replace(/-/g, '/') : state.timeOnly ? '选择时间' : state.dateOnly ? '选择日期' : '选择日期与时间';
     state.button.setAttribute('aria-label', state.input.getAttribute('aria-label') + '：' + (value || '未选择'));
   }
   function render(state) {
@@ -121,17 +155,18 @@ window.WBDateTimePicker = (() => {
     WBFilterCombobox.close();
     document.querySelectorAll('.ui-select.open').forEach(el => el.classList.remove('open'));
     opened = state;
-    const date = state.input.value ? new Date(state.input.value + (state.dateOnly ? 'T00:00:00' : '')) : new Date();
+    const date = state.input.value && !state.timeOnly ? new Date(state.input.value + (state.dateOnly ? 'T00:00:00' : '')) : new Date();
     state.selected = date;
     state.month = new Date(date.getFullYear(), date.getMonth(), 1);
     const fields = state.panel.querySelectorAll('input');
-    fields[0].value = state.input.value ? pad(date.getHours()) : state.endOfDay ? '23' : '00';
-    fields[1].value = state.input.value ? pad(date.getMinutes()) : state.endOfDay ? '59' : '00';
+    const time = state.timeOnly ? (state.input.value || '09:00').split(':') : null;
+    fields[0].value = time ? time[0] : state.input.value ? pad(date.getHours()) : state.endOfDay ? '23' : '00';
+    fields[1].value = time ? time[1] : state.input.value ? pad(date.getMinutes()) : state.endOfDay ? '59' : '00';
     state.panel.querySelector('.date-picker-error').hidden = true;
     state.panel.querySelector('.date-picker-title').textContent = '选择' + state.input.getAttribute('aria-label');
     state.panel.hidden = false;
     state.button.setAttribute('aria-expanded', 'true');
-    render(state);
+    if (!state.timeOnly) render(state);
     const rect = state.button.getBoundingClientRect(), panel = state.panel;
     const width = Math.min(320, innerWidth - 16);
     panel.style.width = width + 'px';
@@ -142,7 +177,7 @@ window.WBDateTimePicker = (() => {
       left: Math.max(8, Math.min(rect.left, innerWidth - width - 8)) + 'px',
       top: Math.max(8, Math.min(below >= height ? rect.bottom + 6 : rect.top - height - 6, innerHeight - height - 8)) + 'px'
     });
-    panel.querySelector('.selected')?.focus({preventScroll:true});
+    (state.timeOnly ? fields[0] : panel.querySelector('.selected'))?.focus({preventScroll:true});
   }
   function commit(state, value) {
     state.input.value = value;
@@ -155,6 +190,16 @@ window.WBDateTimePicker = (() => {
     opened = null; state.panel.hidden = true;
     state.button.setAttribute('aria-expanded', 'false');
     if (focus) state.button.focus({preventScroll:true});
+  }
+  function destroy(id) {
+    const state = instances.get(id);
+    if (!state) return;
+    if (opened === state) close();
+    state.panel.remove(); state.button.remove(); state.input.hidden = false;
+    instances.delete(id);
+  }
+  function destroyWithin(root) {
+    for (const [id, state] of instances) if (root.contains(state.input)) destroy(id);
   }
   document.addEventListener('pointerdown', event => {
     if (opened && !opened.panel.contains(event.target) && !opened.button.contains(event.target)) close();
@@ -169,7 +214,7 @@ window.WBDateTimePicker = (() => {
     if (opened && !opened.panel.contains(event.target)) close();
   }, true);
   window.addEventListener('resize', () => close());
-  return {attach, sync, close};
+  return {attach, sync, close, destroyWithin};
 })();
 
 document.addEventListener('DOMContentLoaded', () => {
