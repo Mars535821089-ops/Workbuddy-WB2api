@@ -787,7 +787,7 @@
 
     <main class="app-main">
       <header class="desktop-topbar">
-        <div class="topbar-heading"><div class="topbar-breadcrumb">WorkBuddy <span>/</span> 工作台</div><h2 id="topbarTitle">账号池</h2></div>
+        <div class="topbar-heading pywebview-drag-region"><div class="topbar-breadcrumb">WorkBuddy <span>/</span> 工作台</div><h2 id="topbarTitle">账号池</h2></div>
         <div class="topbar-actions">
           <span class="topbar-status"><span></span><span id="topbarMode">服务已连接</span></span>
           <button type="button" class="topbar-endpoint" onclick="navigator.clipboard.writeText(location.origin+'/v1').then(()=>{this.querySelector('span').textContent='已复制 API 地址';setTimeout(()=>this.querySelector('span').textContent='复制 API 地址',1800)})" title="复制当前 API 地址"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 9h11v11H9zM4 15H3V3h12v1"/></svg><span>复制 API 地址</span></button>
@@ -1086,7 +1086,7 @@
         <div class="overflow-x-auto">
           <table class="tbl min-w-lg">
             <thead class="bg-slate-50 text-slate-500 text-left"><tr>
-              <th class="px-4 py-3">任务名</th><th class="px-4 py-3">类型</th><th class="px-4 py-3">间隔(分)</th>
+              <th class="px-4 py-3">任务名</th><th class="px-4 py-3">类型</th><th class="px-4 py-3">执行周期</th>
               <th class="px-4 py-3">下次运行</th><th class="px-4 py-3">上次结果</th><th class="px-4 py-3">状态</th>
               <th class="px-4 py-3 text-right">操作</th>
             </tr></thead>
@@ -5169,15 +5169,15 @@ const _scheduleRequests = new Set();
 // 任务类型 -> 人话名称。结果里有 summary 就用它，这样每个任务都统一可读。
 // keepalive_tokens 是既有任务（保活）但两张表都漏了它，显得像"未知任务"。
 const TASK_LABELS = {
-  claim_benefits: "每日检查并领取权益",
-  daily_checkin: "每日签到领取积分",
+  claim_benefits: "检查并领取权益",
+  daily_checkin: "签到领取积分",
   refresh_balances: "刷新平台总积分",
   refresh_credits: "更新积分到期快照",
   sync_models: "同步模型列表",
   refresh_growth_tasks: "更新成长任务列表",
   run_growth_tasks: "自动做成长任务",
   run_growth_plan: "WorkBuddy 成长计划巡检",
-  keepalive_tokens: "token 保活（按整点）",
+  keepalive_tokens: "token 保活刷新",
 };
 
 function scheduleResultSummary(s){
@@ -5330,9 +5330,9 @@ async function loadSchedules(){
   }
   $("#scheduleBody").innerHTML = (_schedules).map(s => `
     <tr class="border-t hover:bg-slate-50">
-      <td class="px-4 py-3 whitespace-nowrap">${esc(s.name)}</td>
+      <td class="px-4 py-3 whitespace-nowrap">${esc(s.display_name || s.name)}</td>
       <td class="px-4 py-3 text-slate-500 whitespace-nowrap">${esc(s.task_label)}</td>
-      <td class="px-4 py-3 text-slate-500">${s.interval_minutes}</td>
+      <td class="px-4 py-3 text-slate-500">${esc(s.cycle_label || ('每 '+s.interval_minutes+' 分钟'))}</td>
       <td class="px-4 py-3 text-xs text-slate-400 whitespace-nowrap">${fmtTime(s.next_run_at)}</td>
       <td class="px-4 py-3 text-xs align-top">
         <div class="flex items-start gap-1">
@@ -5365,6 +5365,33 @@ async function runSchedule(id){
 }
 async function toggleSchedule(id){ await api("/api/schedules/"+id+"/toggle",{method:"POST"}); loadSchedules(); }
 async function delSchedule(id){ if(!await uiConfirm({message:"确认删除该任务？", title:"删除定时任务"}))return; const r=await api("/api/schedules/"+id,{method:"DELETE"}); toast(r.ok?"已删除":"失败",r.ok?"ok":"err"); if(r.ok) loadSchedules(); }
+function scheduleTimingHTML(data){
+  const timing = data.timing || {mode:'preset', time:'09:00', weekdays:[0], monthday:1};
+  const modes = [['preset','系统预设'],['interval','固定间隔'],['daily','每天'],['weekly','每周'],['monthly','每月']];
+  const minutes = data.interval_minutes || 60;
+  const unit = [10080,1440,60,1].find(value => minutes % value === 0);
+  return `<label class="block text-sm mb-1" for="scCycle">执行周期</label>
+    <select id="scCycle" class="w-full border rounded-lg px-3 py-2 mb-2 text-sm" onchange="onScheduleCycleChange()">${modes.map(([value,label])=>`<option value="${value}" ${timing.mode===value?'selected':''}>${label}</option>`).join('')}</select>
+    <div id="scIntervalWrap" ${['preset','interval'].includes(timing.mode)?'':'hidden'}>
+      <div class="flex gap-2 mb-2"><input aria-label="执行间隔" id="scIv" type="number" min="1" max="5256000" class="w-full border rounded-lg px-3 py-2 text-sm" value="${minutes/unit}">
+      <select id="scUnit" aria-label="间隔单位" class="border rounded-lg px-3 py-2 text-sm">${[[1,'分钟'],[60,'小时'],[1440,'天'],[10080,'周']].map(([value,label])=>`<option value="${value}" ${value===unit?'selected':''}>${label}</option>`).join('')}</select></div>
+    </div>
+    <div id="scCalendarWrap" ${['daily','weekly','monthly'].includes(timing.mode)?'':'hidden'}>
+      <label class="block text-sm mb-1" for="scTime">执行时间（北京时间 UTC+8）</label>
+      <input id="scTime" type="time" class="w-full border rounded-lg px-3 py-2 mb-2 text-sm" value="${esc(timing.time||'09:00')}">
+      <div id="scWeekWrap" class="mb-2" ${timing.mode==='weekly'?'':'hidden'}><span class="block text-sm mb-1">执行日</span><div class="flex flex-wrap gap-2">${[...'一二三四五六日'].map((day,i)=>`<label class="text-sm"><input type="checkbox" name="scWeekday" value="${i}" ${(timing.weekdays||[0]).includes(i)?'checked':''}> 周${day}</label>`).join('')}</div></div>
+      <div id="scMonthWrap" ${timing.mode==='monthly'?'':'hidden'}><label class="block text-sm mb-1" for="scMonthday">每月几号</label><input id="scMonthday" type="number" min="1" max="31" class="w-full border rounded-lg px-3 py-2 mb-2 text-sm" value="${Number(timing.monthday)||1}"><p class="text-xs text-slate-500 mb-2">当月没有该日期时，在当月最后一天执行。</p></div>
+    </div>
+    <p id="scPresetHint" class="text-xs text-slate-500 mb-3" ${timing.mode==='preset'?'':'hidden'}>沿用系统现有间隔；token 保活沿用系统配置的整点时间。选择其他周期可自定义。</p>`;
+}
+function onScheduleCycleChange(){
+  const mode = $('#scCycle').value;
+  $('#scIntervalWrap').hidden = !['preset','interval'].includes(mode);
+  $('#scCalendarWrap').hidden = !['daily','weekly','monthly'].includes(mode);
+  $('#scWeekWrap').hidden = mode !== 'weekly';
+  $('#scMonthWrap').hidden = mode !== 'monthly';
+  $('#scPresetHint').hidden = mode !== 'preset';
+}
 function scheduleForm(title, data){
   data = data || {};
   const tasks = Object.entries(TASK_LABELS);
@@ -5373,12 +5400,11 @@ function scheduleForm(title, data){
   const isCheckin = data.task==="daily_checkin";
   openModal(`
     <h3 class="font-bold mb-3">${title}</h3>
-    <input id="scName" class="w-full border rounded-lg px-3 py-2 mb-2 text-sm" placeholder="任务名（可选）" value="${esc(data.name||'')}" />
+    <input id="scName" class="w-full border rounded-lg px-3 py-2 mb-2 text-sm" placeholder="任务名（留空按执行周期自动命名）" value="${esc(data.display_name && data.display_name!==data.name ? '' : (data.name||''))}" />
     <label class="block text-sm mb-1">任务类型</label>
     <div class="mb-2">${uiSelectHTML("scTask", { value: String(data.task || (tasks[0] && tasks[0][0]) || ""),
         options: taskOpts, onChange: () => onTaskChange() })}</div>
-    <label class="block text-sm mb-1">间隔（分钟）</label>
-    <input id="scIv" type="number" min="1" class="w-full border rounded-lg px-3 py-2 mb-2 text-sm" value="${data.interval_minutes||60}" />
+    ${scheduleTimingHTML(data)}
     <p class="text-xs text-slate-500 mb-3">成长计划建议每 60 分钟巡检：逐账号补每日活跃、签到、领取旅行礼物、兑换连登奖励并使用免费抽奖次数。每天最多一次成功活跃对话；每日最多开启一批盲盒（5个以内，消耗已有能量）、抽奖5次。进度持久化，重复运行会跳过已完成项。</p>
     <div id="scStopWrap" class="${isCheckin?'':'hidden'}">
       <label class="block text-sm mb-1">停止领取时间（可选）</label>
@@ -5397,10 +5423,19 @@ function onTaskChange(){
   if(wrap) wrap.classList.toggle("hidden", v!=="daily_checkin");
 }
 function openAddSchedule(){ scheduleForm("新建定时任务", {enabled:1, interval_minutes:60, task:"refresh_balances"}); }
-function editSchedule(id){ const s=_schedules.find(x=>x.id===id); if(!s) return; scheduleForm("编辑定时任务", {id:id, name:s.name, task:s.task, interval_minutes:s.interval_minutes, enabled:s.enabled, stop_after:s.stop_after}); }
+function editSchedule(id){ const s=_schedules.find(x=>x.id===id); if(!s) return; scheduleForm("编辑定时任务", s); }
 async function submitSchedule(id){
   const stopRaw = ($("#scStop") ? $("#scStop").value : "").trim();
-  const body = { name:$("#scName").value, task:uiSelectValue("scTask"), interval_minutes:Number($("#scIv").value||60), enabled:$("#scEnabled").checked?1:0, stop_after: stopRaw || null };
+  const body = { name:$("#scName").value, task:uiSelectValue("scTask"), interval_minutes:Number($("#scIv").value)*Number($("#scUnit").value), enabled:$("#scEnabled").checked?1:0, stop_after: stopRaw || null,
+    timing:{mode:$("#scCycle").value, time:$("#scTime").value || '09:00', monthday:Number($("#scMonthday").value), weekdays:[...document.querySelectorAll('[name=scWeekday]:checked')].map(el=>Number(el.value))} };
+  if(!body.timing.weekdays.length && body.timing.mode === 'weekly'){ toast('请至少选择一周中的一天','err'); return; }
+  if(!body.timing.weekdays.length) body.timing.weekdays = [0];
+  if(body.timing.mode === 'monthly' && !$('#scMonthday').reportValidity()) return;
+  if(body.timing.mode !== 'monthly') body.timing.monthday = 1;
+  if(!Number.isInteger(body.interval_minutes) || body.interval_minutes < 1 || body.interval_minutes > 5256000){
+    if(['preset','interval'].includes(body.timing.mode)){ toast('请输入有效的执行间隔','err'); return; }
+    body.interval_minutes = 60;
+  }
   let r;
   if(id){ r = await api("/api/schedules/"+id,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); }
   else { r = await api("/api/schedules",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); }

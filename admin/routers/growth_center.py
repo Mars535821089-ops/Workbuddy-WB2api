@@ -16,6 +16,7 @@ from admin.growth_center import (fields, identity, load_snapshot, record_result,
 from admin.growth_plan import _DAY_TZ, _Lease, _read, _write
 from admin.models import Account, GrowthPlanRecord, Schedule, SystemSetting
 from admin.security import require_admin
+from admin.schedule_timing import cycle_label
 
 router = APIRouter(prefix="/api/growth-center", tags=["growth-center"],
                    dependencies=[Depends(require_admin)])
@@ -71,6 +72,7 @@ def overview(aid: int, db: Session = Depends(get_db)):
             "latest_run": _record(latest) if latest else None,
             "schedule": {"id": schedule.id, "enabled": bool(schedule.enabled),
                          "interval_minutes": schedule.interval_minutes,
+                         "cycle_label": cycle_label(schedule),
                          "next_run_at": _iso(schedule.next_run_at)} if schedule else None,
             "today": datetime.now(_DAY_TZ).date().isoformat()}
 

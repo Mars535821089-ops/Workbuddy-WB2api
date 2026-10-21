@@ -21,6 +21,19 @@ public class MainActivity extends Activity {
     private static boolean startupTransitionShown;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private WebView web;
+
+    private void applySystemTheme(boolean dark) {
+        int background = dark ? Color.rgb(30, 35, 44) : Color.WHITE;
+        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
+            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
+            (dark ? 0 : View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR) |
+            (!dark && Build.VERSION.SDK_INT >= 26 ? View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR : 0));
+        getWindow().getDecorView().setBackgroundColor(background);
+        if (web != null) {
+            web.setBackgroundColor(background);
+            ((View) web.getParent()).setBackgroundColor(background);
+        }
+    }
     private TextView status;
     private FrameLayout boot;
     private TextView bootTitle;
@@ -176,13 +189,33 @@ public class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        getWindow().setStatusBarColor(Color.rgb(245, 246, 248));
-        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+        getWindow().setStatusBarColor(Color.TRANSPARENT);
+        getWindow().setNavigationBarColor(Color.TRANSPARENT);
+        if (Build.VERSION.SDK_INT >= 29) {
+            getWindow().setStatusBarContrastEnforced(false);
+            getWindow().setNavigationBarContrastEnforced(false);
+        }
+        if (Build.VERSION.SDK_INT >= 30) getWindow().setDecorFitsSystemWindows(false);
         FrameLayout layout = new FrameLayout(this);
-        layout.setFitsSystemWindows(true);
+        layout.setOnApplyWindowInsetsListener((view, insets) -> {
+            int top, left, right, bottom;
+            if (Build.VERSION.SDK_INT >= 30) {
+                android.graphics.Insets bars = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+                android.graphics.Insets keyboard = insets.getInsets(WindowInsets.Type.ime());
+                top = bars.top; left = bars.left; right = bars.right; bottom = Math.max(bars.bottom, keyboard.bottom);
+            } else {
+                top = insets.getSystemWindowInsetTop(); left = insets.getSystemWindowInsetLeft();
+                right = insets.getSystemWindowInsetRight(); bottom = insets.getSystemWindowInsetBottom();
+            }
+            // Keep the entire WebView inside system bars, cutouts and keyboard.
+            // CSS padding scrolls away and cannot protect the status bar area.
+            view.setPadding(left, top, right, bottom);
+            return insets;
+        });
         web = new WebView(this);
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
         layout.addView(web, new FrameLayout.LayoutParams(-1, -1));
+        applySystemTheme(false);
         boot = new FrameLayout(this);
         boot.setBackground(new GradientDrawable(GradientDrawable.Orientation.TL_BR,
             new int[]{Color.rgb(230, 246, 240), Color.rgb(245, 247, 250), Color.rgb(232, 239, 250)}));
@@ -242,6 +275,7 @@ public class MainActivity extends Activity {
         footnote.setTextColor(Color.rgb(130, 139, 148)); footnote.setPadding(0, dp(22), 0, 0); card.addView(footnote);
         layout.addView(boot, new FrameLayout.LayoutParams(-1, -1));
         setContentView(layout);
+        layout.requestApplyInsets();
         web.getSettings().setJavaScriptEnabled(true);
         web.getSettings().setDomStorageEnabled(true);
         // Local assets change with APK upgrades, even while the origin stays fixed.
@@ -333,6 +367,9 @@ public class MainActivity extends Activity {
     }
 
     private class MobileBridge {
+        @JavascriptInterface public void setTheme(String theme) {
+            if (bridgeTrusted) handler.post(() -> { if (!destroyed) applySystemTheme("dark".equals(theme)); });
+        }
         @JavascriptInterface public String sessionToken() {
             return bridgeTrusted && LocalApiService.token != null ? LocalApiService.token : "";
         }

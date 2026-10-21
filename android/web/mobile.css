@@ -1,4 +1,7 @@
 .mobile-mode .browser-password-settings{display:none!important}
+.mobile-mode body{background:var(--surface)}
+.mobile-mode .app-side{top:0}
+.mobile-mode .side-nav .side-foot{display:block;flex-shrink:0;margin-top:auto;padding:14px 12px 0}
 .mobile-mode .account-intake .intake-copy p{font-size:12px}
 .mobile-mode .desktop-topbar{padding:12px 16px;min-height:64px}
 .mobile-mode #modal{padding:12px;backdrop-filter:none}

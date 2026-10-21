@@ -1031,6 +1031,11 @@ def _classify_error(status: int, body: str) -> str:
     body_l = (body or "").lower()
     code = _json_code(body)
 
+    # 未获上游批准的通道请求不能靠换号解决；保留原始错误交给调用方，
+    # 不重放同一请求，也不将账号标记为冷却或故障。
+    if code == "11128":
+        return "client"
+
     # 1. 该后端无此模型（确定性，重试无意义）
     if code == _MODEL_BLOCK_CODE:
         return "model_block"

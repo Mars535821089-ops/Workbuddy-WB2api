@@ -135,7 +135,7 @@ SPLASH = """<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="
 *{box-sizing:border-box}body{margin:0;background:linear-gradient(135deg,#e6f6f0,#f5f7fa 55%,#e8effa);color:#172b29;font:15px 'Segoe UI','Microsoft YaHei',sans-serif;display:grid;place-items:center;min-height:100vh}
 main{width:min(480px,90vw);padding:40px;background:#fffffff0;border:1px solid white;border-radius:28px;box-shadow:0 20px 70px #163c3020}.tag{color:#148665;font-size:12px;letter-spacing:2px}h1{font-size:28px;margin:10px 0 26px}p{color:#657670;line-height:1.8}.bar{height:5px;background:#e6f5ed;border-radius:6px;overflow:hidden}.bar:after{content:'';display:block;width:40%;height:100%;background:#148665;animation:load 1.3s infinite}@keyframes load{to{transform:translateX(260%)}}
 button{padding:11px 16px;border:0;border-radius:10px;cursor:pointer;background:#e8f5ef;color:#146e55;margin:4px 6px 4px 0}.hint{font-size:12px;color:#8a9792}textarea{width:100%;height:190px;border:1px solid #d7e4dd;border-radius:10px;padding:12px;resize:vertical}
-</style><main><div class="tag">你的本地 AI 网关</div><h1>WorkBuddy2API</h1><p id="status">正在启动本地服务…</p><div class="bar" id="bar"></div><p class="hint">就绪后自动进入工作台，无需登录管理台。<br>首次运行可能稍慢，请保留账号数据。</p>
+</style><div class="pywebview-drag-region" style="position:fixed;top:0;left:0;right:100px;height:36px"></div><div style="position:fixed;top:0;right:0"><button aria-label="最小化" onclick="pywebview.api.window_action('minimize')">−</button><button aria-label="关闭窗口" onclick="pywebview.api.window_action('close')">×</button></div><main><div class="tag">你的本地 AI 网关</div><h1>WorkBuddy2API</h1><p class="hint">v__VERSION__</p><p id="status">正在启动本地服务…</p><div class="bar" id="bar"></div><p class="hint">就绪后自动进入工作台，无需登录管理台。<br>首次运行可能稍慢，请保留账号数据。</p>
 <button onclick="pywebview.api.retry_start()">重试启动</button><button id="diagnosticButton" hidden onclick="showDiagnostic()">启动诊断</button><section id="diagnostic" hidden><p>服务尚未启动也可复制或导出诊断。</p><textarea id="report" readonly aria-label="启动诊断"></textarea><button onclick="copyReport()">复制诊断</button><button onclick="downloadReport()">导出诊断</button></section></main>
 <script>
 const began=Date.now();let reading=false;
@@ -143,7 +143,7 @@ async function showDiagnostic(){try{const r=await pywebview.api.startup_diagnost
 function copyReport(){const r=document.getElementById('report');r.select();document.execCommand('copy')}
 function downloadReport(){const u=URL.createObjectURL(new Blob([document.getElementById('report').value],{type:'text/plain;charset=utf-8'}));const a=document.createElement('a');a.href=u;a.download='workbuddy-startup-diagnostic.txt';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000)}
 setInterval(async()=>{if(reading||!window.pywebview?.api)return;reading=true;try{const s=await pywebview.api.startup_status();document.getElementById('status').textContent=s.message;document.getElementById('diagnosticButton').hidden=!(s.failed||Date.now()-began>30000);document.getElementById('bar').hidden=s.failed}catch(e){}finally{reading=false}},1000);
-</script></html>"""
+</script></html>""".replace("__VERSION__", VERSION)
 
 
 class Bridge:
@@ -178,6 +178,26 @@ class Bridge:
     def apply_update(self):
         return self._controller.apply_update()
 
+    def window_action(self, action):
+        window = self._controller.window
+        if action == "minimize":
+            window.minimize()
+        elif action == "maximize":
+            if str(window.native.WindowState) == "Maximized":
+                window.restore()
+            else:
+                window.maximize()
+        elif action == "close":
+            window.destroy()
+        elif action.startswith("resize-") and os.name == "nt":
+            edges = {"left": 1, "right": 2, "top": 3, "top-left": 4, "top-right": 5,
+                     "bottom": 6, "bottom-left": 7, "bottom-right": 8}
+            edge = edges.get(action.removeprefix("resize-"))
+            if edge and str(window.native.WindowState) == "Normal":
+                user32 = ctypes.WinDLL("user32", use_last_error=True)
+                user32.PostMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t]
+                user32.PostMessageW(window.native.Handle.ToInt64(), 0x0112, 0xF000 + edge, 0)
+
 
 class DesktopAPI:
     def __init__(self, base: Path, config: dict):
@@ -191,6 +211,7 @@ class DesktopAPI:
         self.runtime_busy = False
         self.update_state = {"busy": False, "message": "", "ready": False}
         self.update_file = None
+        self.tray_startup_update_check = False
         self.updates = UpdateService(base)
         self.closing = threading.Event()
         self.start_lock = threading.Lock()
@@ -228,8 +249,38 @@ class DesktopAPI:
 
     def check_updates(self):
         result = self.updates.check()
-        result.update(runtime=self.runtime_message, update=self.update_state)
+        result.update(runtime=self.runtime_message, update=self.update_state,
+                      startup_prompt_handled=self.tray_startup_update_check)
         return result
+
+    def _check_tray_startup_update(self):
+        """A tray-only launch checks too, without starting the API service."""
+        try:
+            result = self.updates.check()
+            latest = result.get("latest")
+            if not result.get("available") or not latest or self.closing.is_set():
+                return
+            choice = ctypes.windll.user32.MessageBoxW(
+                None, f"发现新版本 {latest['tag']}（当前 v{VERSION}）。\n\n"
+                "是否立即更新？\n选择“是”将下载、校验并重启客户端；选择“否”暂不更新。",
+                "WorkBuddy2API · 版本更新", 0x00010024)
+            if choice != 6 or self.closing.is_set():  # IDYES
+                return
+            response = self.download_update(latest["id"])
+            if response.get("error"):
+                self.tray.notify(response["error"])
+                return
+            while self.update_state.get("busy"):
+                if self.closing.wait(.25):
+                    return
+            if self.update_state.get("ready") and not self.closing.is_set():
+                response = self.apply_update()
+                if response.get("error"):
+                    self.tray.notify(response["error"])
+            else:
+                self.tray.notify(self.update_state.get("message") or "更新下载失败，请稍后重试")
+        except Exception:
+            logging.exception("Tray startup update check failed")
 
     def update_status(self):
         return dict(self.update_state, runtime=self.runtime_message)
@@ -292,7 +343,13 @@ class DesktopAPI:
                              close_fds=True)
         except Exception as exc:
             return {"error": f"无法安装更新：{exc}"}
-        threading.Thread(target=self.window.destroy, daemon=True).start()
+        def close_for_update():
+            import webview
+            # The hidden tray host also owns the EXE process. Leaving it alive
+            # prevents the updater from replacing the running binary.
+            for window in list(webview.windows):
+                window.destroy()
+        threading.Thread(target=close_for_update, daemon=True).start()
         return {"ok": True}
 
     def retry_start(self):
@@ -396,7 +453,7 @@ class DesktopAPI:
             self.window = webview.create_window(
                 f"WorkBuddy2API · v{VERSION}", html=SPLASH, js_api=Bridge(self),
                 width=1280, height=860, min_size=(900, 600),
-                background_color="#f5f6f8", text_select=True)
+                background_color="#f5f6f8", text_select=True, frameless=True, easy_drag=False)
         except Exception as exc:
             logging.exception("Window creation failed from tray")
             self.window = None
@@ -616,7 +673,7 @@ def run(tray_mode: bool = False):
             # Original path: window owns everything, closing it exits the app.
             window = webview.create_window(f"WorkBuddy2API · v{VERSION}", html=SPLASH, js_api=Bridge(api),
                                           width=1280, height=860, min_size=(900, 600),
-                                          background_color="#f5f6f8", text_select=True)
+                                          background_color="#f5f6f8", text_select=True, frameless=True, easy_drag=False)
             api.window = window
             window.events.closed += api.stop
             webview.start(lambda: (api.retry_runtime(), api.retry_start()), gui="edgechromium",
@@ -631,7 +688,12 @@ def run(tray_mode: bool = False):
         webview.create_window("__tray_host__", html="<!doctype html><title></title>",
                               width=1, height=1, frameless=True, hidden=True)
         tray.notify("WorkBuddy2API 已在托盘运行，右键图标启动服务。")
-        webview.start(api.retry_runtime, gui="edgechromium",
+        api.tray_startup_update_check = True
+        def start_tray_shell():
+            api.retry_runtime()
+            threading.Thread(target=api._check_tray_startup_update,
+                             name="startup-update", daemon=True).start()
+        webview.start(start_tray_shell, gui="edgechromium",
                       private_mode=False, storage_path=str(base / "webview"),
                       icon=str(ROOT / "desktop/assets/app.ico"))
     except Exception as exc:

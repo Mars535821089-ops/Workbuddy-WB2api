@@ -3,13 +3,14 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from admin.db import get_db
 from admin.models import Schedule
 from admin.scheduler import run_task, _dump_result, start_growth_plan
 from admin.security import require_admin
+from admin.schedule_timing import ScheduleTiming, timing_of, next_run_at, cycle_label, display_name
 
 router = APIRouter(prefix="/api/schedules", tags=["schedules"])
 
@@ -19,12 +20,12 @@ TASK_LABELS = {
     "refresh_balances": "刷新平台总积分",
     "refresh_credits": "更新积分到期快照",
     "sync_models": "同步模型列表",
-    "daily_checkin": "每日签到领取积分",
-    "claim_benefits": "每日检查并领取权益",
-    "refresh_growth_tasks": "每日更新成长任务列表",
-    "run_growth_tasks": "每日自动做成长任务",
+    "daily_checkin": "签到领取积分",
+    "claim_benefits": "检查并领取权益",
+    "refresh_growth_tasks": "更新成长任务列表",
+    "run_growth_tasks": "自动做成长任务",
     "run_growth_plan": "WorkBuddy 成长计划巡检",
-    "keepalive_tokens": "token 保活（按整点）",
+    "keepalive_tokens": "token 保活刷新",
 }
 
 
@@ -41,7 +42,8 @@ def _parse_stop_after(value: str | None):
 class ScheduleIn(BaseModel):
     name: str = ""
     task: str = "refresh_balances"
-    interval_minutes: int = 60
+    interval_minutes: int = Field(default=60, ge=1, le=5256000)
+    timing: Optional[ScheduleTiming] = None
     enabled: int = 1
     stop_after: Optional[str] = None  # ISO 时间字符串（daily_checkin 用）
 
@@ -49,7 +51,8 @@ class ScheduleIn(BaseModel):
 class SchedulePatch(BaseModel):
     name: Optional[str] = None
     task: Optional[str] = None
-    interval_minutes: Optional[int] = None
+    interval_minutes: Optional[int] = Field(default=None, ge=1, le=5256000)
+    timing: Optional[ScheduleTiming] = None
     enabled: Optional[int] = None
     stop_after: Optional[str] = None  # ISO 时间字符串（daily_checkin 用）
 
@@ -62,6 +65,9 @@ def list_schedules(_: bool = Depends(require_admin), db: Session = Depends(get_d
         {
             "id": s.id,
             "name": s.name,
+            "display_name": display_name(s),
+            "timing": timing_of(s).dict(),
+            "cycle_label": cycle_label(s),
             "task": s.task,
             "task_label": TASK_LABELS.get(s.task, s.task),
             "interval_minutes": s.interval_minutes,
@@ -88,10 +94,18 @@ def create_schedule(body: ScheduleIn, _: bool = Depends(require_admin), db: Sess
         stop_after=_parse_stop_after(body.stop_after),
         next_run_at=datetime.utcnow(),
     )
+    if body.timing is not None:
+        _set_timing(s, body.timing)
+    if timing_of(s).mode != "preset":
+        s.next_run_at = next_run_at(s, datetime.utcnow())
     db.add(s)
     db.commit()
     db.refresh(s)
     return {"id": s.id, "ok": True}
+
+
+def _set_timing(schedule, timing):
+    schedule.timing_config = timing.json()
 
 
 @router.patch("/{sid}")
@@ -99,6 +113,7 @@ def patch_schedule(sid: int, body: SchedulePatch, _: bool = Depends(require_admi
     s = db.query(Schedule).filter(Schedule.id == sid).first()
     if not s:
         raise HTTPException(status_code=404, detail="任务不存在")
+    was_enabled = bool(s.enabled)
     if body.name is not None:
         s.name = body.name
     if body.task is not None:
@@ -107,11 +122,13 @@ def patch_schedule(sid: int, body: SchedulePatch, _: bool = Depends(require_admi
         s.task = body.task
     if body.interval_minutes is not None:
         s.interval_minutes = max(1, body.interval_minutes)
+    if body.timing is not None:
+        _set_timing(s, body.timing)
     if body.enabled is not None:
         s.enabled = body.enabled
-        if body.enabled:
-            s.next_run_at = datetime.utcnow()  # 重新启用后立即可调度
-    if body.stop_after is not None:
+    if body.timing is not None or body.interval_minutes is not None or body.task is not None or (body.enabled and not was_enabled):
+        s.next_run_at = next_run_at(s, datetime.utcnow())
+    if "stop_after" in body.__fields_set__:
         s.stop_after = _parse_stop_after(body.stop_after)
     db.commit()
     return {"id": s.id, "ok": True}
@@ -124,7 +141,7 @@ def toggle_schedule(sid: int, _: bool = Depends(require_admin), db: Session = De
         raise HTTPException(status_code=404, detail="任务不存在")
     s.enabled = 0 if s.enabled else 1
     if s.enabled:
-        s.next_run_at = datetime.utcnow()
+        s.next_run_at = next_run_at(s, datetime.utcnow())
     db.commit()
     return {"id": s.id, "enabled": bool(s.enabled)}
 
@@ -160,7 +177,7 @@ def run_now(sid: int, _: bool = Depends(require_admin), db: Session = Depends(ge
         _run = {"ok": False, "error": str(e)}
         s.last_result = _dump_result(_run)
     s.last_run_at = now
-    s.next_run_at = now + timedelta(minutes=s.interval_minutes or 60)
+    s.next_run_at = next_run_at(s, now)
     db.commit()
     return {"id": s.id, "result": _run}
 

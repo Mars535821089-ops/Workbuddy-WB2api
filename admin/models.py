@@ -293,6 +293,7 @@ class Schedule(Base):
     name = Column(String(120), default="")
     task = Column(String(40), default="refresh_balances")  # refresh_balances | sync_models | daily_checkin
     interval_minutes = Column(Integer, default=60)
+    timing_config = Column(Text, default="")  # 空值保留系统预设；JSON 为用户执行周期
     enabled = Column(Integer, default=1)  # 0/1
     last_run_at = Column(DateTime, nullable=True)
     next_run_at = Column(DateTime, nullable=True)

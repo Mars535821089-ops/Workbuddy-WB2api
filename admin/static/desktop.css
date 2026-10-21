@@ -1,4 +1,29 @@
-.version-button{display:block;margin:8px 0 12px;padding:6px 0;border:0;background:transparent;color:var(--fg-muted);font-size:12px;cursor:pointer;text-align:left}
+.version-button{display:block;margin:4px 0 0;padding:4px 0;border:0;background:transparent;color:var(--fg-muted);font-size:12px;cursor:pointer;text-align:left}
+.app-side{height:100dvh;overflow:hidden}
+.side-brand,.side-foot{flex-shrink:0}
+.side-nav{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+.side-foot{margin-top:12px}
+.mobile-theme-controls{display:none!important}
+.window-controls{display:flex;gap:4px}
+.topbar-actions .window-controls button{width:32px;padding:0;font-size:20px;border:0;background:transparent}
+.topbar-actions .window-controls button:last-child:hover{background:#c42b1c;color:#fff}
+.native-window .desktop-topbar{min-height:64px;padding:8px 14px 8px 24px;gap:12px}
+.native-window .topbar-heading{flex:1;align-self:stretch;display:flex;flex-direction:column;justify-content:center;user-select:none}
+.native-window .topbar-breadcrumb{display:none}
+.native-window .topbar-heading h2{margin:0}
+.window-resize{position:fixed;z-index:1000}
+.resize-top,.resize-bottom{height:5px;left:8px;right:8px;cursor:ns-resize}
+.resize-top{top:0}.resize-bottom{bottom:0}
+.resize-left,.resize-right{width:5px;top:8px;bottom:8px;cursor:ew-resize}
+.resize-left{left:0}.resize-right{right:0}
+.resize-top-left,.resize-top-right,.resize-bottom-left,.resize-bottom-right{width:8px;height:8px}
+.resize-top-left{left:0;top:0;cursor:nwse-resize}.resize-top-right{right:0;top:0;cursor:nesw-resize}
+.resize-bottom-left{left:0;bottom:0;cursor:nesw-resize}.resize-bottom-right{right:0;bottom:0;cursor:nwse-resize}
+@media(max-width:900px){
+  .app-side{height:auto;overflow:visible}
+  .side-nav{flex:none}
+  .side-nav .side-foot{display:block;margin-top:auto;padding-top:16px}
+}
 #localBoot{display:none}.desktop-mode #login,.desktop-mode .browser-logout,.desktop-mode .side-item-quit,.desktop-mode .browser-password-settings{display:none!important}
 .desktop-mode #localBoot{display:flex;position:fixed;inset:0;align-items:center;justify-content:center;flex-direction:column;gap:16px;background:var(--bg);z-index:90;color:var(--fg-muted)}
 #localBoot img{width:56px;height:56px}#localBoot button{padding:8px 16px;border:1px solid var(--border);border-radius:10px;background:var(--surface);cursor:pointer}

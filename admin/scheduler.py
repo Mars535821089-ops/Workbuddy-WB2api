@@ -17,6 +17,7 @@ from admin.db import SessionLocal
 from admin.models import Schedule
 from admin.config import settings
 from admin import maintenance
+from admin.schedule_timing import timing_of, next_run_at
 from collections import Counter
 
 _logger = logging.getLogger(__name__)
@@ -704,7 +705,7 @@ def _run_one(s: Schedule, db, now: datetime):
     # 现在的语义是**到期窗口**：只要现在距上次成功执行已超过一个周期
     # （或超过了今天的计划时刻），就补跑一次。这样错过整点只会「晚跑」，
     # 不会「永远不跑」。
-    if s.task == "keepalive_tokens":
+    if s.task == "keepalive_tokens" and timing_of(s).mode == "preset":
         if not _keepalive_due(s, now):
             # 还没到今天的计划时刻 → 顺延到下一个计划时刻（正常等待）
             s.next_run_at = _next_keepalive_at(now)
@@ -724,7 +725,7 @@ def _run_one(s: Schedule, db, now: datetime):
         s.last_result = json.dumps(
             {"ok": False, "error": _short_error(e)}, ensure_ascii=False)[:2000]
     s.last_run_at = now
-    s.next_run_at = now + timedelta(minutes=s.interval_minutes or 60)
+    s.next_run_at = next_run_at(s, now)
     db.commit()
 
 
@@ -854,8 +855,9 @@ def start_growth_plan(schedule, db):
                 # 刷新以保留执行期间用户修改的间隔/启停配置。
                 worker_db.refresh(row)
                 row.last_result = _dump_result(result)
-                row.next_run_at = datetime.utcnow() + timedelta(
-                    minutes=1 if result.get("pending") else row.interval_minutes or 60)
+                finished = datetime.utcnow()
+                row.next_run_at = (finished + timedelta(minutes=1) if result.get("pending")
+                                   else next_run_at(row, finished))
                 worker_db.commit()
 
     thread = threading.Thread(target=worker, daemon=True, name="wb-growth-plan")
@@ -916,7 +918,7 @@ def ensure_growth_schedules(db):
         # 已存在则校正先后：执行必须晚于刷新
         base = refresh.next_run_at or now
         want = base + timedelta(seconds=_GROWTH_MIN_AFTER_REFRESH)
-        if run.next_run_at is None or run.next_run_at < want:
+        if timing_of(run).mode == "preset" and (run.next_run_at is None or run.next_run_at < want):
             run.next_run_at = want
             changed = True
 
@@ -957,6 +959,8 @@ def ensure_keepalive_schedule(db):
         return
 
     # ---- 存量记录自愈 ----
+    if timing_of(row).mode != "preset":
+        return  # 用户指定的周期不被启动时的系统预设覆盖。
     # 旧版本用 **UTC** 的小时来计算 next_run_at，与现在的「本地时区」语义不符
     # （22 点被算成 UTC 22:00 = 北京次日 06:00）。部署新版后，库里那条旧记录
     # 会把下次执行排到「按新语义看还早得很」的时刻 —— 逻辑修好了却仍然不跑。

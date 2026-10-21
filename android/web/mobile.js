@@ -32,6 +32,11 @@ window.WBMobile = (() => {
     window.dispatchEvent(new Event('wb-shell-resume'));
   }
   document.documentElement.classList.add('mobile-mode', 'desktop-mode');
+  function syncSystemTheme() {
+    window.WBAndroid?.setTheme?.(document.documentElement.dataset.theme || 'light');
+  }
+  syncSystemTheme();
+  window.addEventListener('wb-theme-change', syncSystemTheme);
   // Android WebView denies navigator.clipboard writes. Its selection copy
   // command uses the system clipboard and works from a user's tap.
   copyText = function(selector) {
