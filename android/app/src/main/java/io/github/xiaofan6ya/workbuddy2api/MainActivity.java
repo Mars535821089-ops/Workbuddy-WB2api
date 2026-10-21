@@ -366,7 +366,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private class MobileBridge {
+    public class MobileBridge {
         @JavascriptInterface public void setTheme(String theme) {
             if (bridgeTrusted) handler.post(() -> { if (!destroyed) applySystemTheme("dark".equals(theme)); });
         }
@@ -379,17 +379,17 @@ public class MainActivity extends Activity {
             if (bytes.length > 32 * 1024 * 1024) return false;
             String safe = filename == null ? "workbuddy-export.info" : filename.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_");
             if (safe.length() > 120) safe = safe.substring(0, 120);
-            if (!safe.endsWith(".info") && !safe.endsWith(".json") && !safe.endsWith(".csv")) safe += ".info";
+            if (!safe.endsWith(".info") && !safe.endsWith(".json") && !safe.endsWith(".jsonl") && !safe.endsWith(".csv") && !safe.endsWith(".txt")) safe += ".info";
             exportRequest = request;
             exportBytes = bytes;
             final String title = safe;
-            final String type = "text/csv".equals(mime) ? "text/csv" : "application/json";
+            final String type = "text/csv".equals(mime) ? "text/csv" : "application/x-ndjson".equals(mime) ? "application/x-ndjson" : "text/plain".equals(mime) ? "text/plain" : "application/json";
             handler.post(() -> {
                 if (destroyed) return;
                 Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
                     .setType(type).putExtra(Intent.EXTRA_TITLE, title);
                 try { startActivityForResult(intent, 12); }
-                catch (ActivityNotFoundException e) { finishExport(false, "找不到文件保存应用"); }
+                catch (RuntimeException e) { finishExport(false, "无法打开系统文件保存器"); }
             });
             return true;
         }

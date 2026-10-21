@@ -19,8 +19,9 @@
 from __future__ import annotations
 
 import logging
+import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -31,6 +32,7 @@ from admin.security import require_admin
 _logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/client-profile", tags=["client-profile"])
+PORTABLE_FORMAT = "workbuddy-client-profile"
 
 
 class SaveIn(BaseModel):
@@ -115,4 +117,35 @@ def save(body: SaveIn, _: bool = Depends(require_admin),
 @router.post("/reset")
 def reset(_: bool = Depends(require_admin), db: Session = Depends(get_db)):
     cprofile.reset(db)
+    return {"ok": True, **_payload(db)}
+
+
+@router.get("/export")
+def export_profile(response: Response, _: bool = Depends(require_admin), db: Session = Depends(get_db)):
+    profile = dict(cprofile.effective(db))
+    profile.pop("user_agent", None)  # Derived again from the imported versions.
+    clean, errors = cprofile.normalize(profile)
+    if errors:
+        raise HTTPException(400, detail="；".join(errors))
+    response.headers['Cache-Control'] = 'no-store'
+    return {"format": PORTABLE_FORMAT, "version": 1, "source": "saved", "profile": clean}
+
+
+@router.post("/import")
+def import_profile(body: dict, _: bool = Depends(require_admin), db: Session = Depends(get_db)):
+    if body.get("format") != PORTABLE_FORMAT or type(body.get("version")) is not int or body.get("version") != 1:
+        raise HTTPException(400, detail="请选择客户端参数导出的 JSON 文件（格式版本 1）")
+    if len(json.dumps(body, ensure_ascii=False).encode('utf-8')) > 256 * 1024:
+        raise HTTPException(400, detail="客户端参数文件不能超过 256 KB")
+    clean, errors = cprofile.normalize(body.get("profile"))
+    if errors or not clean:
+        raise HTTPException(400, detail="；".join(errors or ["档案不能为空"]))
+    for name, value in clean.get('headers', {}).items():
+        if any(c in name + value for c in '\r\n'):
+            raise HTTPException(400, detail="请求头不能包含换行")
+    # Validate the whole document before replacing anything; importing also
+    # activates saved mode so an absent/stale installation cannot override it.
+    result = cprofile.save(clean, new_source=cprofile.SOURCE_SAVED, db=db, merge=False)
+    if not result.get("ok"):
+        raise HTTPException(400, detail="；".join(result.get("errors") or ["导入失败"]))
     return {"ok": True, **_payload(db)}

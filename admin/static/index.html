@@ -1025,6 +1025,10 @@
             <div id="usageModelSel"></div>
           </div>
           <div class="flex-1 min-w-[150px]">
+            <div class="text-[11px] text-slate-400 mb-1">按账号</div>
+            <div id="usageAccountSel"></div>
+          </div>
+          <div class="flex-1 min-w-[150px]">
             <div class="text-[11px] text-slate-400 mb-1">按端点</div>
             <div id="usageCaseSel"></div>
           </div>
@@ -1074,6 +1078,11 @@
           <div id="usageTrendChart"></div>
         </div>
       </div>
+      <div class="grid md:grid-cols-2 gap-4 mb-4">
+        <div class="card p-4"><div class="flex items-center justify-between mb-3"><h3 class="text-sm font-semibold">账号分布</h3><span class="text-xs text-slate-400">成功请求数</span></div><div id="usageAccountChart"></div></div>
+        <div class="card p-4"><div class="flex items-center justify-between mb-3"><h3 class="text-sm font-semibold">请求结果分布</h3><span class="text-xs text-slate-400">全部请求</span></div><div id="usageResultChart"></div></div>
+      </div>
+      <div id="usageAccountModels" class="card p-4 mb-4 hidden"></div>
     </section>
 
     <!-- 定时任务面板 -->
@@ -1200,6 +1209,8 @@
           <button onclick="detectClient()" class="text-sm px-3 py-1.5 rounded-lg border hover:bg-slate-50" title="扫描本机安装的 WorkBuddy，读取真实的版本号与风控配置"><i class="fa-solid fa-magnifying-glass mr-1"></i> 探测本机客户端</button>
           <button onclick="toggleClientSource()" id="clientSourceBtn" class="text-sm px-3 py-1.5 rounded-lg border hover:bg-slate-50" title="切换取值策略"><i class="fa-solid fa-arrows-rotate mr-1"></i> 取值策略</button>
           <button onclick="saveClientProfile()" class="text-sm px-3 py-1.5 rounded-lg btn-primary"><i class="fa-solid fa-floppy-disk mr-1"></i> 保存</button>
+          <button onclick="WBProfileTransfer.exportFile()" class="console-btn quiet">导出参数</button>
+          <button onclick="WBProfileTransfer.chooseImport()" class="console-btn quiet">导入并启用</button>
           <button onclick="resetClientProfile()" class="text-sm px-3 py-1.5 rounded-lg border hover:bg-slate-50" title="清空已保存值，回到「优先现场探测」"><i class="fa-solid fa-eraser mr-1"></i> 重置</button>
         </div>
       </div>
@@ -4042,6 +4053,13 @@ async function submitUpload(){
 /** 触发浏览器下载一个文本文件。 */
 async function downloadText(filename, text, mime = "application/json") {
   if(window.WBMobile?.saveText) return WBMobile.saveText(filename, text, mime);
+  if(window.pywebview?.api?.save_text) {
+    const result = await pywebview.api.save_text(filename, text, mime);
+    if (!result?.ok) throw new Error(result?.cancelled ? '已取消保存' : result?.error || '文件未保存');
+    return;
+  }
+  if (window.pywebview?.api || document.documentElement.classList.contains('native-window'))
+    throw new Error('当前安装包缺少文件保存功能，请更新 EXE');
   const blob = new Blob([text], { type: mime + ";charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -4068,7 +4086,7 @@ function openExport() {
     </div>
     <label class="block text-sm mb-3">导出格式
       <select id="expFormat" class="w-full border rounded-lg px-3 py-2 mt-2">
-        <option value="client">官方新版加密凭证集（.jsonl）</option>
+        ${window.WBMobile ? '' : '<option value="client">官方新版加密凭证集（.jsonl）</option>'}
         <option value="backup">系统明文备份（.jsonl）</option>
       </select>
     </label>
@@ -4102,12 +4120,11 @@ async function _fetchExport() {
 }
 
 async function doExport() {
-  const d = await _fetchExport();
-  if (!d) return;
-  // 每行一个 JSON 对象（JSONL）：既能被批量上传逐行解析，
-  // 也能用文本工具按行处理，比单个大数组更实用。
-  const text = d.items.map(x => JSON.stringify(JSON.parse(x))).join("\n");
   try {
+    const d = await _fetchExport();
+    if (!d) return;
+    // Each line is independently importable as an account backup.
+    const text = d.items.map(x => JSON.stringify(JSON.parse(x))).join("\n");
     await downloadText(`workbuddy-accounts-${d.format === 'client' ? 'encrypted' : 'backup'}-${exportStamp()}.jsonl`, text, 'application/x-ndjson');
     closeModal();
     toast(`已导出 ${d.count} 个账号${d.skipped ? `（跳过 ${d.skipped} 个无效凭据）` : ""}`, "ok");
@@ -4134,11 +4151,11 @@ async function copyExport() {
 
 /** 导出单个账号。 */
 async function exportAcc(id, name) {
-  const r = await api(`/api/accounts/${id}/export?format=client`);
-  const d = await r.json().catch(() => ({}));
-  if (!r.ok) { toast("导出失败：" + (d.detail || r.status), "err"); return; }
-  const safe = String(name || d.name || d.uid || id).replace(/[\\/:*?"<>|]/g, "_").slice(0, 40);
   try {
+    const r = await api(`/api/accounts/${id}/export?format=${window.WBMobile ? 'backup' : 'client'}`);
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { toast("导出失败：" + (d.detail || r.status), "err"); return; }
+    const safe = String(name || d.name || d.uid || id).replace(/[\\/:*?"<>|]/g, "_").slice(0, 40);
     await downloadText(`${safe || "account"}-${id}.info`, JSON.stringify(JSON.parse(d.item), null, 2));
     toast(`已导出账号「${name || d.name || id}」`, "ok");
   } catch(error) { toast(error.message || '文件未保存', 'err'); }
@@ -5660,9 +5677,9 @@ function requestActivityRow(r, active) {
   const label = active ? requestPhaseLabel(r.phase || '') :
     reason === 'concurrent_requests' ? '并发已满' :
     reason === 'requests_per_minute' ? '频率超限' :
-    r.outcome === 'disconnected' ? '客户端断开' :
+    r.outcome === 'disconnected' ? '客户端提前结束' :
     r.outcome === 'completed' ? '已结束' : r.outcome === 'http_error' ? '请求失败' : '请求中断';
-  const color = active ? 'var(--warn)' : r.outcome === 'completed' ? 'var(--ok)' : 'var(--danger)';
+  const color = active || r.outcome === 'disconnected' ? 'var(--warn)' : r.outcome === 'completed' ? 'var(--ok)' : 'var(--danger)';
   // 在途请求的「已耗时」由浏览器本地走表：若让服务端每秒为它推一帧，
   // 一条长连接就退化成 1 秒轮询，正好是这次要消灭的开销。
   const elapsed = active
@@ -5670,7 +5687,7 @@ function requestActivityRow(r, active) {
     : `${(Number(r.elapsed_ms || 0)/1000).toFixed(1)}s`;
   return `<tr><td class="text-xs whitespace-nowrap">${fmtTime(r.started_at)}</td>
     <td class="text-xs">${esc(r.key_name || '—')}</td><td class="font-mono text-xs">${esc(r.model || '尚未读取模型')}</td>
-    <td class="text-xs whitespace-nowrap" style="color:${color}" title="${esc(reason)}">${esc(label)}${!active && r.status ? ' · HTTP '+Number(r.status) : ''}</td>
+    <td class="text-xs whitespace-nowrap" style="color:${color}" title="${esc(r.outcome === 'disconnected' ? '客户端在完整响应结束前关闭连接；HTTP 200 仅表示响应头已发送，并非上游报错。' : reason)}">${esc(label)}${!active && r.status ? ' · HTTP '+Number(r.status) : ''}</td>
     <td class="text-xs whitespace-nowrap">${elapsed}</td>
     <td class="text-xs">${Number(r.upstream_attempts || 0)} 次</td><td class="text-xs font-mono" title="${esc(r.path || '')}">${esc((r.request_id || '').slice(0,12))}</td></tr>`;
 }
@@ -6383,17 +6400,19 @@ function fmtNum(n) {
  * tooltip：原生 <title> 有 ~1s 延迟且样式不可控，故自绘跟随鼠标的浮层。
  */
 function donutChart(rows, valueKey, title) {
-  const items = (rows || []).filter(r => (r[valueKey] || 0) > 0);
+  const items = (rows || []).filter(r => (r.requests || 0) > 0 || (r[valueKey] || 0) > 0);
   if (!items.length) return `<div class="text-xs text-slate-400 py-8 text-center">暂无数据</div>`;
 
   const total = items.reduce((s, r) => s + (r[valueKey] || 0), 0);
+  const countsOnly = items.every(r => r.credits === undefined);
   const R = 60, SW = 26, C = 2 * Math.PI * R;
   let offset = 0;
   const arcs = items.map((r, i) => {
+    if (!(r[valueKey] > 0)) return '';
     const frac = (r[valueKey] || 0) / total;
     const len = frac * C;
     const pct = (frac * 100).toFixed(1);
-    const tip = `<b>${esc(r.label)}</b><br>积分 ${fmtCredit(r.credits)}（${pct}%）<br>请求 ${fmtNum(r.requests)} · Token ${fmtNum(r.tokens)}`;
+    const tip = `<b>${esc(r.label)}</b><br>${valueKey === 'requests' ? '请求 '+fmtNum(r.requests) : '积分 '+fmtCredit(r.credits)}（${pct}%）${countsOnly ? '' : '<br>请求 '+fmtNum(r.requests)+' · Token '+fmtNum(r.tokens)}`;
     const seg = `<circle class="chart-hit" cx="80" cy="80" r="${R}" fill="none"
         stroke="${_PIE_COLORS[i % _PIE_COLORS.length]}" stroke-width="${SW}"
         stroke-dasharray="${len} ${C - len}" stroke-dashoffset="${-offset}"
@@ -6412,9 +6431,9 @@ function donutChart(rows, valueKey, title) {
         <span class="text-xs">${esc(r.label)}</span>
       </td>
       <td class="py-1.5 px-2 text-right text-xs text-slate-500">${fmtNum(r.requests)}</td>
-      <td class="py-1.5 px-2 text-right text-xs text-slate-500">${fmtNum(r.tokens)}</td>
+      ${countsOnly ? '' : `<td class="py-1.5 px-2 text-right text-xs text-slate-500">${fmtNum(r.tokens)}</td>`}
       <td class="py-1.5 px-2 text-right text-xs text-slate-400">${frac}%</td>
-      <td class="py-1.5 pl-2 text-right text-xs font-medium text-amber-600">${fmtCredit(r.credits)}</td>
+      ${countsOnly ? '' : `<td class="py-1.5 pl-2 text-right text-xs font-medium text-amber-600">${fmtCredit(r.credits)}</td>`}
     </tr>`;
   }).join("");
 
@@ -6426,9 +6445,9 @@ function donutChart(rows, valueKey, title) {
           <thead><tr class="text-[10px] text-slate-400">
             <th class="text-left font-normal pb-1">名称</th>
             <th class="text-right font-normal pb-1">请求</th>
-            <th class="text-right font-normal pb-1">Token</th>
+            ${countsOnly ? '' : '<th class="text-right font-normal pb-1">Token</th>'}
             <th class="text-right font-normal pb-1">占比</th>
-            <th class="text-right font-normal pb-1">积分</th>
+            ${countsOnly ? '' : '<th class="text-right font-normal pb-1">积分</th>'}
           </tr></thead>
           <tbody>${legend}</tbody>
         </table>
@@ -6500,7 +6519,7 @@ let _usageLoadGeneration = 0;
 // 筛选下拉的选项缓存。声明必须在使用它的 _usageQuery / loadUsageFilterOptions
 // **之前**：虽是顶层 let（会被提升到 TDZ），但函数可能在任何位置被调用，
 // 声明靠后容易踩「Cannot access before initialization」。放前面最省心。
-let _usageOpts = { keys: [], models: [], use_cases: [] };
+let _usageOpts = { keys: [], models: [], use_cases: [], accounts: [] };
 
 function initUsageSelects() {
   if (_usageSelReady) return;
@@ -6587,6 +6606,7 @@ async function loadUsageFilterOptions() {
   const curKey = uiSelectValue("usageKeySel") || "";
   const curModel = uiSelectValue("usageModelSel") || "";
   const curCase = uiSelectValue("usageCaseSel") || "";
+  const curAccount = uiSelectValue("usageAccountSel") || "";
   const keyVals = (opts.keys || []).map(k => String(k.id));
 
   const keyBox = $("#usageKeySel");
@@ -6607,6 +6627,12 @@ async function loadUsageFilterOptions() {
       onChange: () => loadUsageStats(),
     });
   }
+  const aBox = $("#usageAccountSel");
+  if (aBox) aBox.outerHTML = uiSelectHTML("usageAccountSel", {
+    value: keep("usageAccountSel", curAccount, (opts.accounts || []).map(a => String(a.id))),
+    options: [{value:"", label:"全部账号"}].concat((opts.accounts || []).map(a => ({value:String(a.id), label:`${a.name} · #${a.id}`}))),
+    onChange: () => loadUsageStats(),
+  });
   const cBox = $("#usageCaseSel");
   if (cBox) {
     cBox.outerHTML = uiSelectHTML("usageCaseSel", {
@@ -6625,6 +6651,7 @@ function resetUsageFilters() {
   uiSelectSet("usageKeySel", "", false);
   uiSelectSet("usageModelSel", "", false);
   uiSelectSet("usageCaseSel", "", false);
+  uiSelectSet("usageAccountSel", "", false);
   uiSelectSet("usageDaysSel", "1", false);
   for (const id of ["usageStart", "usageEnd"]) { $("#" + id).value = ""; window.WBDateTimePicker?.sync(id); }
   _usageFilterReady = false;
@@ -6637,11 +6664,13 @@ function _usageQuery() {
   const key = uiSelectValue("usageKeySel") || "";
   const model = uiSelectValue("usageModelSel") || "";
   const cs = uiSelectValue("usageCaseSel") || "";
+  const account = uiSelectValue("usageAccountSel") || "";
   const qs = _usageTimeParams();
   qs.set("granularity", grain);
   if (key) qs.set("key_id", key);
   if (model) qs.set("model", model);
   if (cs) qs.set("use_case", cs);
+  if (account) qs.set("account_id", account);
 
   const keyName = ((_usageOpts.keys || []).find(k => String(k.id) === key) || {}).name || key;
   const conds = [];
@@ -6650,6 +6679,7 @@ function _usageQuery() {
   if (key) conds.push(`Key=${keyName}`);
   if (model) conds.push(`模型=${model}`);
   if (cs) conds.push(`端点=${cs}`);
+  if (account) conds.push(`账号=${(_usageOpts.accounts || []).find(a=>String(a.id)===account)?.name || account}`);
   return { qs: qs.toString(), conds };
 }
 
@@ -6657,7 +6687,7 @@ function _usageQuery() {
 // 后者要提示清除筛选，否则用户会以为数据丢了。
 function _usageEmpty(conds) {
   const tip = conds.length
-    ? `当前筛选条件（${conds.join("，")}）下没有记录，试试放宽时间范围或
+    ? `当前筛选条件（${esc(conds.join("，"))}）下没有记录，试试放宽时间范围或
        <a href="javascript:resetUsageFilters()" class="text-emerald-600 underline">清除筛选</a>`
     : "该时间范围内没有任何请求记录";
   return `<div class="text-sm text-slate-400 py-8 text-center">${tip}</div>`;
@@ -6689,6 +6719,14 @@ async function loadUsageStats() {
     if (!ok) { if (ov) ov.innerHTML = `<div class="col-span-4 text-sm text-red-500">加载失败: ${esc(d.detail || "")}</div>`; return; }
 
     const o = d.overview || {};
+    const accountBox = $('#usageAccountModels');
+    accountBox.classList.toggle('hidden', !d.filters?.account_id);
+    const limitLabels = {model_daily:'日限额', model_rate:'模型限流', model_queue:'排队限制'};
+    const sourceLabels = {upstream:'上游返回', estimated:'估算', queue_retry:'上游重试时间', backoff:'本地退避'};
+    accountBox.innerHTML = `<h3 class="text-sm font-semibold mb-2">所选账号 · 模型用量与限额</h3><p class="text-xs text-slate-400 mb-3">用量为所选日期内经过本网关的记录；限额为当前观测状态，上游未提供总额度和剩余额度时不推算。</p>
+      <div class="overflow-x-auto"><table class="tbl min-w"><thead><tr><th>模型</th><th>请求 / 成功 / 失败</th><th>Token</th><th>积分</th><th>当前限制</th><th>恢复时间</th></tr></thead><tbody>${(d.account_models||[]).map(m=>`<tr><td class="font-mono text-xs">${esc(m.model||'未知')}</td><td>${fmtNum(m.requests)} / ${fmtNum(m.successes)} / ${fmtNum(m.failures)}</td><td>${fmtNum(m.tokens)}</td><td>${fmtCredit(m.credits)}</td><td>${m.limit ? `${esc(limitLabels[m.limit.kind]||m.limit.kind)}${m.limit.upstream_code ? ' · '+esc(m.limit.upstream_code) : ''}` : '未观测到限制'}</td><td>${m.limit ? `${fmtTime(m.limit.until)} · ${esc(sourceLabels[m.limit.reset_source]||m.limit.reset_source)}` : '—'}</td></tr>`).join('') || '<tr><td colspan="6">当前筛选下无模型用量或限制记录</td></tr>'}</tbody></table></div>`;
+    $('#usageAccountChart').innerHTML = (d.by_account || []).length ? donutChart(d.by_account, 'requests') : _usageEmpty(conds);
+    $('#usageResultChart').innerHTML = (d.by_result || []).length ? donutChart(d.by_result, 'requests') : _usageEmpty(conds);
     const failTip = o.failed_requests ? `（含失败 ${fmtNum(o.failed_requests)}）` : "";
     if (ov) ov.innerHTML = `
       ${card("总请求数", fmtNum(o.requests) + failTip, "fa-paper-plane", "text-indigo-600")}
@@ -6706,9 +6744,12 @@ async function loadUsageStats() {
       return;
     }
 
-    $("#usageModelChart").innerHTML = donutChart(d.by_model, "credits");
-    $("#usageKeyChart").innerHTML = donutChart(d.by_key, "credits");
-    $("#usageEndpointChart").innerHTML = donutChart(d.by_endpoint, "credits");
+    for (const [id, rows] of [['usageModelChart', d.by_model], ['usageKeyChart', d.by_key], ['usageEndpointChart', d.by_endpoint]]) {
+      const metric = (rows || []).some(r => r.credits > 0) ? 'credits' : 'requests';
+      const chart = $('#' + id);
+      chart.previousElementSibling.querySelector('span').textContent = metric === 'credits' ? '按积分' : '按成功请求数';
+      chart.innerHTML = donutChart(rows, metric);
+    }
     $("#usageTrendChart").innerHTML = trendChart(d.trend);
   } catch (e) {
     if (generation !== _usageLoadGeneration) return;
@@ -6799,5 +6840,6 @@ if (TOKEN && !new URLSearchParams(location.search).has("desktop")) {
 <script src="/static/vendor/dompurify-3.4.17.min.js"></script>
 <script src="/static/release-notes.js"></script>
 <script src="/static/desktop.js"></script>
+<script src="/static/profile-transfer.js"></script>
 </body>
 </html>

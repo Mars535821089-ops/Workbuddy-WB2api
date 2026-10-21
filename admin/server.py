@@ -148,9 +148,10 @@ app.include_router(maintenance.router)
 app.include_router(growth.router)
 app.include_router(growth_center.router)
 app.include_router(benefits.router)
+from admin.routers import client_profile
+app.include_router(client_profile.router)
 if os.getenv("WORKBUDDY_ANDROID") != "1":
-    from admin.routers import app_source, client_profile
-    app.include_router(client_profile.router)
+    from admin.routers import app_source
     app.include_router(app_source.router)
 app.include_router(login_router.router)
 app.include_router(releases.router)

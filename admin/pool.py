@@ -191,12 +191,12 @@ class InFlight:
         with self._lock:
             return uid in self._maintenance or (limit > 0 and self._counts.get(uid, 0) >= limit)
 
-    def acquire_maintenance(self, uid: str) -> bool:
+    def acquire_maintenance(self, uid: str, *, drain: bool = False) -> bool:
         """Reserve an idle identity while background work may rotate its token."""
         if not uid:
             return False
         with self._lock:
-            if uid in self._maintenance or self._counts.get(uid, 0):
+            if uid in self._maintenance or (not drain and self._counts.get(uid, 0)):
                 return False
             self._maintenance.add(uid)
             return True

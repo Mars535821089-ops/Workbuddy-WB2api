@@ -34,6 +34,8 @@ router = APIRouter(prefix="/api/growth", tags=["growth"],
 
 #: 任务定义缓存 {"tasks": [...], "synced_at": iso}
 _task_cache: dict = {}
+_task_cache_at = 0.0
+_TASK_CACHE_TTL = 60.0
 
 #: 单账号任务列表的短缓存（秒）。
 #: 上游拉一次任务列表实测 1~3.3 秒，而前端「执行完 / 领奖完」都会立刻再拉一次；
@@ -153,7 +155,9 @@ def growth_tasks(refresh: bool = False, db: Session = Depends(get_db)):
 
     任务定义对所有账号一致，所以随便用一个可用登录态拉取即可。
     """
-    if _task_cache.get("tasks") and not refresh:
+    global _task_cache_at
+    if (_task_cache.get("tasks") and not refresh
+            and time.monotonic() - _task_cache_at < _TASK_CACHE_TTL):
         cached = dict(_task_cache)
         cached["cached"] = True
         return cached
@@ -180,6 +184,7 @@ def growth_tasks(refresh: bool = False, db: Session = Depends(get_db)):
         "source_account_id": acc.id,
         "cached": False,
     })
+    _task_cache_at = time.monotonic()
     return dict(_task_cache)
 
 
@@ -315,7 +320,7 @@ def run_accounts(account_ids: list[int], task_codes: list[str] | None,
                         if growth_plans.classify(t).get("actionable")
                         and t.get("accept_status") not in ("claimed", "completed")
                     ]))
-                    accept_codes = [c for c in wanted if growth_plans.plan_for(c).actionable
+                    accept_codes = [c for c in wanted if growth_plans.classify(by_code.get(c, {})).get("actionable")
                                     and by_code.get(c, {}).get("accept_status") == "not_accepted"]
                     accepted = s.growth_accept(accept_codes) if accept_codes else {}
                     if accept_codes:
@@ -338,7 +343,7 @@ def run_accounts(account_ids: list[int], task_codes: list[str] | None,
                     attempted = []
                     for code in wanted:
                         info = by_code.get(code) or {}
-                        plan = growth_plans.plan_for(code)
+                        plan = growth_plans.plan_for(code, info)
                         item = {"task_code": code, "title": info.get("title") or code,
                                 "level": plan.level}
                         if info.get("accept_status") == "claimed":
@@ -349,7 +354,7 @@ def run_accounts(account_ids: list[int], task_codes: list[str] | None,
                             item.update(ok=True, status="completed", skipped="已完成，等待领奖")
                             report(item)
                             continue
-                        if not plan.actionable or not info:
+                        if not growth_plans.classify(info).get("actionable") or not info:
                             item.update(ok=True, skipped=plan.reason or "任务不可自动执行")
                             report(item)
                             continue
@@ -388,7 +393,9 @@ def run_accounts(account_ids: list[int], task_codes: list[str] | None,
                                 fn = getattr(s, plan.firer, None) if plan.firer else None
                                 if plan.firer and fn is None:
                                     raise RuntimeError(f"缺少触发方法 {plan.firer}")
-                                r = fn() if fn else s.growth_fire_event(plan.event_codes, model=plan.model or model)
+                                r = fn(**plan.firer_kwargs) if fn else s.growth_fire_event(plan.event_codes, model=plan.model or model)
+                                if r.get("expert_id"):
+                                    item.update(expert_id=r["expert_id"], expert_name=r.get("expert_name", ""))
                                 if not r.get("ok"):
                                     item["last_error"] = r.get("msg") or "触发失败"
                                     break  # Do not repeat a timed-out event ten times.

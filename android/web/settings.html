@@ -11,6 +11,12 @@
     <p class="mobile-setting-hint">重启保留账号和数据库。通知关闭时服务仍可能运行；请查看下方接口检查。需要后台提供 API 时，请在系统设置中允许后台运行。</p>
   </div>
   <div class="card mobile-settings-card">
+    <h3>客户端参数</h3>
+    <p class="mobile-setting-hint">导入电脑或服务端导出的参数文件，版本号、请求头和指纹同步到本机并立即启用。</p>
+    <div id="mobileProfileState" aria-live="polite">正在读取参数…</div>
+    <div class="mobile-setting-actions"><button class="console-btn primary" type="button" onclick="WBProfileTransfer.chooseImport()">导入并启用</button><button class="console-btn quiet" type="button" onclick="WBProfileTransfer.exportFile()">导出参数</button></div>
+  </div>
+  <div class="card mobile-settings-card">
     <div class="mobile-setting-heading"><h3>接口自动检查</h3><button id="mobileCheck" class="console-btn quiet" type="button">重新检查</button></div>
     <p class="mobile-setting-hint">启动及进入本页时检查，不发起模型对话。鉴权检查只验证入口；真实对话请使用下方测速。</p>
     <label class="mobile-setting-field">测试 API Key<select id="mobileTestKey"><option value="">尚无可用 Key</option></select></label>

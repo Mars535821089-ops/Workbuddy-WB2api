@@ -117,3 +117,42 @@ def snapshot():
     return {"scope": "process_local", "skipped_since_start": skipped,
             "reserved_accounts": POOL.inflight.maintenance_count(),
             "account_gap_seconds": min(60.0, max(0.0, settings.KEEPALIVE_ACCOUNT_GAP))}
+
+
+@contextmanager
+def token_slot(account, db, wait_seconds=30):
+    """Renew credentials even during cooling; drain conversations before rotation.
+
+    Reserving first prevents a busy identity from being starved by new requests.
+    A bounded wait leaves a pending account for the scheduler's short retry.
+    """
+    global _last_finished
+    locked = _batch_lock.acquire(timeout=wait_seconds)
+    reserved = False
+    uid = account.uid or f"account:{account.id}"
+    try:
+        if not locked:
+            yield "background_busy"
+            return
+        gap = min(60.0, max(0.0, settings.KEEPALIVE_ACCOUNT_GAP))
+        with _state_lock:
+            last = _last_finished
+        if last is not None:
+            time.sleep(max(0, gap - (time.monotonic() - last)))
+        reserved = POOL.inflight.acquire_maintenance(uid, drain=True)
+        if not reserved:
+            yield "inflight"
+            return
+        deadline = time.monotonic() + wait_seconds
+        while POOL.inflight.count(uid) and time.monotonic() < deadline:
+            time.sleep(.1)
+        db.refresh(account)
+        yield ("inactive" if account.status != "active" else
+               "inflight" if POOL.inflight.count(uid) else None)
+    finally:
+        if reserved:
+            with _state_lock:
+                _last_finished = time.monotonic()
+            POOL.inflight.release_maintenance(uid)
+        if locked:
+            _batch_lock.release()

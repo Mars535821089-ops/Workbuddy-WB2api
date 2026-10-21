@@ -70,7 +70,7 @@ def prepare() -> None:
     staging.mkdir(parents=True)
     for path in (ROOT / "admin").rglob("*.py"):
         relative = path.relative_to(ROOT)
-        if path.name in ("app_source.py",) or relative == Path("admin/routers/client_profile.py"):
+        if path.name in ("app_source.py",):
             continue
         target = staging / relative
         target.parent.mkdir(parents=True, exist_ok=True)

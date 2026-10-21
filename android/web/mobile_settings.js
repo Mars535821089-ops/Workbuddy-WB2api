@@ -89,6 +89,7 @@ window.WBMobileSettings = (() => {
   }
   async function check(force = false) {
     systemStatus();
+    window.WBProfileTransfer?.status();
     if (checking || speedController || (!force && Date.now() - lastCheck < 30000)) return;
     checking = true;
     el('mobileCheck').disabled = true; el('mobileTestKey').disabled = true;

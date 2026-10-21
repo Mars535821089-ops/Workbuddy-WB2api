@@ -8,6 +8,7 @@ import re
 import sys
 import time
 import uuid
+import unicodedata
 from contextlib import contextmanager
 from datetime import datetime
 
@@ -1038,14 +1039,23 @@ class AccountSession:
     # 具体任务触发器
     # ------------------------------------------------------------------
 
-    def fire_expert_use(self, team_only: bool = False) -> dict:
+    def fire_expert_use(self, team_only: bool = False, keyword: str | None = None) -> dict:
         """召唤专家任务：用真实专家 id 上报 expert_actual_use。
 
         每次调用取一个不同专家（按 uid 轮转，避免永远只报第一个）。
         target 次数由调用方循环完成。
         """
         teams = team_only
-        experts = self.fetch_experts(team_only=teams, limit=12)
+        experts = self.fetch_experts(team_only=teams, keyword=keyword, limit=50 if keyword else 12)
+        if keyword:
+            def normalized(name):
+                return re.sub(r"\s+", "", unicodedata.normalize("NFKC", str(name))).casefold()
+            matches = {str(e["id"]): e for e in experts
+                       if normalized(e["name"]) == normalized(keyword)}
+            if len(matches) != 1:
+                return {"ok": False, "status": 0,
+                        "msg": f"指定专家「{keyword}」精确匹配 {len(matches)} 个，未上报，留待下次"}
+            experts = list(matches.values())
         if not experts:
             return {"ok": False, "status": 0,
                     "msg": "取不到真实专家 id，跳过（不自造）"}
@@ -1063,7 +1073,8 @@ class AccountSession:
             "requestModelId": "deepseek-v4-flash",
             "requestModelName": "DeepSeek V4 Flash", "userId": self._uid(),
         }
-        return self.report_billing_event([ev])
+        result = self.report_billing_event([ev])
+        return {**result, "expert_id": e["id"], "expert_name": e["name"]}
 
     def fire_expert_team(self) -> dict:
         """召唤专家团任务：只取 expert_type=team 的真实团队。"""

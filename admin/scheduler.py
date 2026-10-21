@@ -263,10 +263,31 @@ def run_keepalive_tokens(db) -> dict:
     """
     from admin.backend import AccountSession
     from admin.models import Account
+    from admin.models import SystemSetting
+
+    # Persist only contested identities, so a one-minute retry never rotates
+    # all already-refreshed accounts again and survives a process restart.
+    pending_row = db.get(SystemSetting, "keepalive:pending")
+    batch_row = db.get(SystemSetting, "keepalive:batch_started")
+    try:
+        pending_ids = json.loads(pending_row.value) if pending_row else []
+    except (TypeError, ValueError):
+        pending_ids = []
+    try:
+        batch_started = float(batch_row.value) if batch_row else 0
+    except (TypeError, ValueError):
+        batch_started = 0
 
     accounts = (db.query(Account).filter(Account.status == "active")
                 .order_by(Account.id.asc()).all())
+    if pending_ids and time.time() - batch_started < 20 * 3600:
+        accounts = [a for a in accounts if a.id in pending_ids]
+    else:
+        batch_started = time.time()
     if not accounts:
+        if pending_row:
+            pending_row.value = "[]"
+            db.commit()
         return {"task": "keepalive_tokens", "ok": True, "total": 0, "msg": "没有活跃账号"}
 
     total = len(accounts)
@@ -278,10 +299,13 @@ def run_keepalive_tokens(db) -> dict:
     errors: list[str] = []
 
     skipped = Counter()
+    pending = []
     for a in accounts:
-        with maintenance.account_slot(a, db) as reason:
+        with maintenance.token_slot(a, db) as reason:
             if reason:
                 skipped[reason] += 1
+                if reason in ("inflight", "background_busy"):
+                    pending.append(a.id)
                 continue
             sess = None
             try:
@@ -303,7 +327,14 @@ def run_keepalive_tokens(db) -> dict:
                     refreshed += 1
                 # **真探测**：本地 expiresAt 不可信（登录态被吊销时它仍可能是
                 # 几千小时之后），只有打一次上游才能确认。
-                sess.fetch_models()
+                # Save a rotated token before any optional probe can fail.
+                a.auth_json = sess.updated_json()
+                db.commit()
+                # Cooling/WAF protects business calls; credential renewal is
+                # independent and must not clear or extend those protections.
+                protected = maintenance._reason(a) in ("waf", "account_cooling")
+                if not protected:
+                    sess.fetch_models()
                 # **回写刷新后的凭证**。原实现漏了这一步：刷新出来的新 token 只存在
                 # 临时文件里，`close()` 一删就没了，库里仍是旧 token ——
                 # 等于「刷新了但白刷」，下次请求还得从头再来（或直接失败）。
@@ -312,8 +343,9 @@ def run_keepalive_tokens(db) -> dict:
                 # 探测成功 → 清零失效连续计数
                 if a.session_dead_fails:
                     a.session_dead_fails = 0
-                a.last_err_at = None
-                a.last_err_msg = ""
+                if not protected:
+                    a.last_err_at = None
+                    a.last_err_msg = ""
                 db.commit()
             except Exception as e:
                 msg = str(e)
@@ -371,6 +403,15 @@ def run_keepalive_tokens(db) -> dict:
                     except Exception:
                         pass
 
+    if pending_row is None:
+        pending_row = SystemSetting(key="keepalive:pending", value="[]")
+        db.add(pending_row)
+    pending_row.value = json.dumps(pending)
+    if batch_row is None:
+        batch_row = SystemSetting(key="keepalive:batch_started", value="0")
+        db.add(batch_row)
+    batch_row.value = str(batch_started)
+    db.commit()
     # 只有「真失效」才值得告警；纯网络失败不该给人「号废了」的错觉
     summary = f"保活成功 {ok}/{total}"
     if refreshed:
@@ -382,11 +423,14 @@ def run_keepalive_tokens(db) -> dict:
                     f"{dead_disabled} 个已自动禁用，其余待人工重登）")
     if failed and not dead_ids:
         summary += f"，{failed} 个探测失败"
-    if skipped:
-        summary += f"，{sum(skipped.values())} 个因保护或在途占用跳过"
+    if pending:
+        summary += f"，{len(pending)} 个在途占用待重试（1 分钟后自动补跑）"
+    if skipped.get("inactive"):
+        summary += f"，{skipped['inactive']} 个账号已停用"
     return {"task": "keepalive_tokens", "ok": True, "total": total,
             "alive": ok, "refreshed": refreshed, "failed": failed,
             "skipped": sum(skipped.values()), "skip_reasons": dict(skipped),
+            "pending_ids": pending, "retry_pending": bool(pending),
             "disabled": dead_disabled, "dead_ids": dead_ids, "errors": errors,
             "summary": summary}
 
@@ -466,9 +510,13 @@ def run_growth_tasks() -> dict:
                            "reason": f"完成 {n_done} 个任务、+{credit_i} 积分"
                            if n_done else "无待做任务"})
         else:
+            failures = [t.get("last_error") or t.get("accept_message") or t.get("skipped")
+                        for t in r.get("tasks", []) if not t.get("ok")]
             detail.append({"account_id": aid, "account": label,
                            "ok": False, "credit": credit_i, "tasks_done": n_done,
-                           "reason": _short_error(r.get("error") or "未知原因")})
+                           "reason": _short_error(r.get("msg") or r.get("error")
+                                                  or next((f for f in failures if f), None)
+                                                  or ("奖励领取失败" if r.get("claim_failed") else "未知原因"))})
 
     result = {
         "task": "run_growth_tasks",
@@ -525,6 +573,12 @@ def run_refresh_growth_tasks() -> dict:
 
     tasks = data.get("tasks") or []
     actionable = sum(1 for t in tasks if t.get("actionable"))
+    if data.get("stale"):
+        return {"task": "refresh_growth_tasks", "ok": False, "stale": True,
+                "total": len(tasks), "actionable": actionable,
+                "synced_at": data.get("synced_at"),
+                "error": data.get("error") or "上游任务刷新失败",
+                "summary": "刷新失败，当前保留旧任务列表"}
     return {
         "task": "refresh_growth_tasks",
         "ok": True,
@@ -684,7 +738,7 @@ def _checkin_summary(r: dict) -> str:
 
 def _run_one(s: Schedule, db, now: datetime):
     from admin.pool import POOL
-    if POOL.waf.active():
+    if POOL.waf.active() and s.task != "keepalive_tokens":
         s.next_run_at = now + timedelta(seconds=max(15, POOL.waf.remaining()))
         s.last_result = _dump_result({"task": s.task, "ok": True, "deferred": True,
                                      "summary": "出口保护期间顺延任务，保护解除后重试"})
@@ -706,7 +760,9 @@ def _run_one(s: Schedule, db, now: datetime):
     # （或超过了今天的计划时刻），就补跑一次。这样错过整点只会「晚跑」，
     # 不会「永远不跑」。
     if s.task == "keepalive_tokens" and timing_of(s).mode == "preset":
-        if not _keepalive_due(s, now):
+        from admin.models import SystemSetting
+        pending = db.get(SystemSetting, "keepalive:pending")
+        if not (pending and pending.value not in ("", "[]")) and not _keepalive_due(s, now):
             # 还没到今天的计划时刻 → 顺延到下一个计划时刻（正常等待）
             s.next_run_at = _next_keepalive_at(now)
             db.commit()
@@ -715,9 +771,10 @@ def _run_one(s: Schedule, db, now: datetime):
         result = run_task(s.task, db, s)
         s.last_result = _dump_result(result)
         s.last_run_at = now
-        s.next_run_at = _next_keepalive_at(now)
+        s.next_run_at = now + timedelta(minutes=1) if result.get("retry_pending") else _next_keepalive_at(now)
         db.commit()
         return
+    result = {}
     try:
         result = run_task(s.task, db, s)
         s.last_result = _dump_result(result)
@@ -725,7 +782,8 @@ def _run_one(s: Schedule, db, now: datetime):
         s.last_result = json.dumps(
             {"ok": False, "error": _short_error(e)}, ensure_ascii=False)[:2000]
     s.last_run_at = now
-    s.next_run_at = next_run_at(s, now)
+    s.next_run_at = (now + timedelta(minutes=1) if s.task == "keepalive_tokens"
+                     and result.get("retry_pending") else next_run_at(s, now))
     db.commit()
 
 

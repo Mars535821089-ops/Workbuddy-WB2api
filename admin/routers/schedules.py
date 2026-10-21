@@ -159,7 +159,7 @@ def run_now(sid: int, _: bool = Depends(require_admin), db: Session = Depends(ge
         raise HTTPException(status_code=404, detail="任务不存在")
     now = datetime.utcnow()
     from admin.pool import POOL
-    if POOL.waf.active():
+    if POOL.waf.active() and s.task != "keepalive_tokens":
         result = {"task": s.task, "ok": True, "deferred": True,
                   "summary": "出口保护期间顺延任务，保护解除后重试"}
         s.last_result = _dump_result(result)
@@ -177,7 +177,8 @@ def run_now(sid: int, _: bool = Depends(require_admin), db: Session = Depends(ge
         _run = {"ok": False, "error": str(e)}
         s.last_result = _dump_result(_run)
     s.last_run_at = now
-    s.next_run_at = next_run_at(s, now)
+    s.next_run_at = (now + timedelta(minutes=1) if s.task == "keepalive_tokens"
+                     and _run.get("retry_pending") else next_run_at(s, now))
     db.commit()
     return {"id": s.id, "result": _run}
 

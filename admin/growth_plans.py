@@ -40,6 +40,7 @@ r"""成长任务的「难度分级 + 完成策略」。
 """
 from dataclasses import dataclass, field
 import re
+from urllib.parse import urlsplit
 
 # 难度等级
 AUTO = "auto"        # 可直接自动完成
@@ -70,6 +71,8 @@ class TaskPlan:
     # 非空 = 调用 AccountSession 上的同名方法（如 fire_library_read）。
     # 有些任务不吃 growthEvent，要求客户端上报真实业务事件，必须分开走。
     firer: str = ""
+    # 由任务元数据解析出的业务目标；只传给本地登记的触发器。
+    firer_kwargs: dict = field(default_factory=dict)
 
     @property
     def actionable(self) -> bool:
@@ -283,7 +286,33 @@ PATTERN_DENY = {
 }
 
 
-def plan_for(task_code: str) -> TaskPlan:
+def _named_expert_plan(task_code: str, task: dict) -> TaskPlan | None:
+    """识别指定专家体验活动，不依赖活动码或专家名称白名单。
+
+    只处理专家入口中明确要求召唤并对话、且给出唯一专家名称的任务。
+    描述不明确或带支付/授权等额外条件时交给人工，不能随机选专家。
+    """
+    text = "\n".join(str(task.get(k) or "") for k in
+                     ("title", "description", "task_desc"))
+    try:
+        jump = urlsplit(str(task.get("jump_url") or ""))
+    except ValueError:
+        return None
+    if (jump.scheme != "workbuddy" or jump.netloc not in ("expert", "experts")
+            or not re.search(r"召唤|使用", text) or "对话" not in text):
+        return None
+    if re.search(r"付费|支付|购买|捐款|充值|授权|订阅|邀请|分享|关注", text):
+        return None
+    names = {name.strip() for name in re.findall(r'[「“\"]([^」”\"\n]{2,100})[」”\"]', text)
+             if name.strip().endswith("专家") and name.strip() != "专家"}
+    if len(names) != 1:
+        return None
+    name = names.pop()
+    return TaskPlan(task_code, AUTO, reason=f"指定专家体验：按名称查找真实专家「{name}」并上报，以上游进度确认完成",
+                    firer="fire_expert_use", firer_kwargs={"keyword": name})
+
+
+def plan_for(task_code: str, task: dict | None = None) -> TaskPlan:
     """取任务策略。
 
     顺序很重要：
@@ -296,6 +325,10 @@ def plan_for(task_code: str) -> TaskPlan:
         return hit
     if task_code in PATTERN_DENY:
         return TaskPlan(task_code, MANUAL, [], "已明确不做（付费/无收益）")
+    if task:
+        named = _named_expert_plan(task_code, task)
+        if named:
+            return named
     for pattern, factory in PATTERN_RULES:
         # 用 search：code 可能带前缀（Hp_Appearance_2 / YY_appearance_new），
         # 用 match 只从开头比，会漏掉这些变体。漏掉的代价是「能做却不做」
@@ -309,13 +342,15 @@ def plan_for(task_code: str) -> TaskPlan:
 def classify(task: dict) -> dict:
     """给任务补充分级信息，供前端展示。"""
     code = task.get("task_code") or ""
-    plan = plan_for(code)
+    plan = plan_for(code, task)
     reward = task.get("reward_credit") or 0
 
     level = plan.level
     # 奖励为 0 的一律降级为跳过（策略表可能滞后于上游活动）
     if reward <= 0 and level != SKIP:
         level = SKIP
+    if task.get("locked"):
+        level = MANUAL
 
     progress = task.get("progress") or {}
     target = progress.get("target")

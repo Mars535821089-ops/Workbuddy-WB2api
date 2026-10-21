@@ -154,6 +154,9 @@ class Bridge:
     def startup_status(self):
         return self._controller.startup_status()
 
+    def save_text(self, filename, text, mime="application/json"):
+        return self._controller.save_text(filename, text, mime)
+
     def startup_diagnostic(self):
         return self._controller.startup_diagnostic()
 
@@ -223,6 +226,30 @@ class DesktopAPI:
 
     def startup_status(self):
         return {"message": self.message, "failed": self.failed}
+
+    def save_text(self, filename, text, mime="application/json"):
+        """Save only after the owner chooses a destination in the native picker."""
+        current = urllib.parse.urlsplit(self.window.get_current_url() or "")
+        if (current.scheme != "http" or current.netloc != f"127.0.0.1:{self.port}"
+                or current.path != "/admin"
+                or urllib.parse.parse_qs(current.query).get("desktop") != ["1"]):
+            return {"ok": False, "error": "只允许本地工作台导出文件"}
+        if not isinstance(text, str) or len(text.encode("utf-8")) > 32 * 1024 * 1024:
+            return {"ok": False, "error": "导出文件过大"}
+        import re
+        import webview
+        name = re.sub(r'[\\/:*?"<>|\x00-\x1f]', '_', str(filename))[:120]
+        if Path(name).suffix.lower() not in ('.info', '.json', '.jsonl', '.csv', '.txt'):
+            return {"ok": False, "error": "不支持的导出文件类型"}
+        try:
+            selected = self.window.create_file_dialog(webview.FileDialog.SAVE, save_filename=name)
+            if not selected:
+                return {"ok": False, "cancelled": True}
+            target = selected[0] if isinstance(selected, (list, tuple)) else selected
+            Path(target).write_bytes(text.encode("utf-8"))
+            return {"ok": True}
+        except Exception:
+            return {"ok": False, "error": "文件保存失败，请更换保存位置后重试"}
 
     def startup_diagnostic(self):
         from admin.request_metrics import safe_error_text

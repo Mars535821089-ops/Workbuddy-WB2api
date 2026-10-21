@@ -12,11 +12,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func
+from sqlalchemy import func, case
 from sqlalchemy.orm import Session
 
 from admin.db import get_db
-from admin.models import ApiKey, UsageLog
+from admin.models import Account, ApiKey, UsageLog
 from admin.security import require_admin
 
 router = APIRouter(prefix="/api/stats", tags=["stats"])
@@ -163,6 +163,38 @@ def usage_stats(
         .all()
     )
     key_names = {k.id: k.name for k in db.query(ApiKey).all()}
+    account_names = {a.id: a.name or a.uid or f"账号 #{a.id}"
+                     for a in db.query(Account).all()}
+    by_account = (_ok_filter(_f(db.query(
+        UsageLog.account_id, func.count(UsageLog.id),
+        func.coalesce(func.sum(UsageLog.total_tokens), 0),
+        func.coalesce(func.sum(UsageLog.credits), 0.0))))
+        .group_by(UsageLog.account_id)
+        .order_by(func.count(UsageLog.id).desc()).all())
+    by_result = (_f(db.query(UsageLog.error_kind, func.count(UsageLog.id)))
+                 .group_by(UsageLog.error_kind).order_by(func.count(UsageLog.id).desc()).all())
+    account_models = []
+    if account_id is not None:
+        from admin.routers.accounts import _active_model_limits
+        limits = _active_model_limits(db, datetime.utcnow()).get(account_id, [])
+        limit_map = {entry['model']: entry for entry in limits}
+        ok = UsageLog.error_kind.in_(_OK_KINDS)
+        rows = (_f(db.query(UsageLog.model, func.count(UsageLog.id),
+                           func.sum(case((ok, 1), else_=0)),
+                           func.sum(case((ok, UsageLog.total_tokens), else_=0)),
+                           func.sum(case((ok, UsageLog.credits), else_=0))))
+                .group_by(UsageLog.model).order_by(func.count(UsageLog.id).desc()).all())
+        for mid, count, successes, tokens, used in rows:
+            account_models.append({'model': mid, 'requests': count,
+                                   'successes': int(successes or 0),
+                                   'failures': count - int(successes or 0),
+                                   'tokens': int(tokens or 0), 'credits': round(float(used or 0), 4),
+                                   'limit': limit_map.pop(mid, None)})
+        # Keep a current limit visible even if this date window has no calls.
+        for mid, entry in limit_map.items():
+            if not model or model == mid:
+                account_models.append({'model': mid, 'requests': 0, 'successes': 0,
+                                       'failures': 0, 'tokens': 0, 'credits': 0, 'limit': entry})
 
     # ── 趋势（按天/按小时分桶）──────────────────────────────────────────
     if db.get_bind().dialect.name == "sqlite":
@@ -224,6 +256,13 @@ def usage_stats(
         "by_model": _dist(by_model, lambda v: v or "未知"),
         "by_endpoint": _dist(by_endpoint, lambda v: v or "chat"),
         "by_key": _dist(by_key, lambda v: key_names.get(v) or f"#{v}"),
+        "by_account": [{**item, "account_id": row[0]} for row, item in zip(
+            by_account, _dist(by_account, lambda v: account_names.get(v) or
+                             (f"已删除账号 #{v}" if v else "未分配账号")))],
+        "by_result": [{"label": "成功" if kind in _OK_KINDS else kind or "未分类",
+                       "requests": int(count)} for kind, count in by_result],
+        "account_models": account_models,
+        "usage_scope": "gateway_only",
         "trend": [
             {
                 "bucket": r[0],
@@ -273,4 +312,10 @@ def usage_filter_options(
         {"id": k.id, "name": k.name}
         for k in db.query(ApiKey).order_by(ApiKey.id.asc()).all()
     ]
-    return {"models": models, "use_cases": cases, "keys": keys}
+    account_names = {a.id: a.name or a.uid or f"账号 #{a.id}" for a in db.query(Account).all()}
+    accounts = [{"id": aid, "name": account_names.get(aid) or f"已删除账号 #{aid}"}
+                for (aid,) in db.query(UsageLog.account_id).filter(*filters, UsageLog.account_id.isnot(None))
+                .group_by(UsageLog.account_id).order_by(func.count(UsageLog.id).desc()).all()]
+    seen = {a['id'] for a in accounts}
+    accounts.extend({'id': aid, 'name': name} for aid, name in account_names.items() if aid not in seen)
+    return {"models": models, "use_cases": cases, "keys": keys, "accounts": accounts}
