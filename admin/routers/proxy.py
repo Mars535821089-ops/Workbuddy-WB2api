@@ -142,6 +142,7 @@ def _normalize_harness_body(chat_body: dict) -> dict:
          pi-ai 只在模型开了 reasoning 时才发 developer，所以典型现象是
          「简单 hello 能过，一开思考就发不出去」—— 正是 DSH 的复现形态。
       2. 孤儿 tool_call 清理。
+      3. system/developer 身份声明句式归一，保留客户端名称与任务指令。
 
     慎改：`prompt_cache_key` / `metadata` 上游实测接受（200），且
     `admin/pool.py` 拿它们当会话粘性键 —— 在这里删掉会打散号池粘性。
@@ -154,6 +155,8 @@ def _normalize_harness_body(chat_body: dict) -> dict:
         stats = normalize_harness_body(chat_body)
         if stats.get("roles"):
             _logger.info("[harness-compat] role developer -> system，改写 %d 条", stats["roles"])
+        if stats.get("identity"):
+            _logger.info("[harness-compat] 身份声明句式归一 %d 处", stats["identity"])
         if stats.get("orphans"):
             _logger.warning("[harness-compat] 清理孤儿 tool_call %d 处 | diag=%s",
                             stats["orphans"], _tool_diag(chat_body))

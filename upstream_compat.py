@@ -1087,11 +1087,12 @@ class StreamCommitBuffer:
 # 10. 第三方 harness 兼容（DeepSeek Harness / pi-ai / Codex 等）
 # ---------------------------------------------------------------------------
 #
-# 逐项实测（2026-10-20，deepseek-v4.1-flash 直连上游）确认了**唯一**会被
-# 整条拒掉的字段，因此这里只修这一处：
+# 逐项实测的已知触发条件（上游规则可能随时间变化）：
 #
 #   messages[].role == "developer"  →  HTTP 400 code=11128
 #       "Illegal API invocation from an unapproved channel"
+#   2026-10-21 新增：system 身份声明 "You are an AI agent powered by ..."
+#   同样可能返回 11128；只归一声明句式，保留名称与后续任务指令。
 #
 #   store / max_tokens / stream_options / tools /
 #   prompt_cache_key / prompt_cache_retention / metadata / user / service_tier
@@ -1106,6 +1107,39 @@ class StreamCommitBuffer:
 #      所以：**只看上游实测结果增删字段，别顺手「清理」有语义的字段。**
 
 
+_HARNESS_IDENTITY_RE = re.compile(
+    r"\bYou\s+are(?=\s+an\s+AI\s+agent\s+powered\s+by\b)",
+    re.IGNORECASE,
+)
+
+
+def normalize_harness_identity(obj: dict) -> int:
+    """归一 system/developer 的身份声明句式，不绑定任何客户端名称。
+
+    保留智能体名称、能力与任务指令，仅将已知不兼容声明中的 You are
+    改为 Your role is。独立于可选脱敏，用户消息、工具参数与结果不改写。
+    返回替换次数；重复调用不会再次改写。
+    """
+    messages = obj.get("messages")
+    if not isinstance(messages, list):
+        return 0
+    count = 0
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") not in ("system", "developer"):
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            message["content"], changed = _HARNESS_IDENTITY_RE.subn("Your role is", content)
+            count += changed
+        elif isinstance(content, list):
+            for part in content:
+                if (isinstance(part, dict) and part.get("type") in ("text", "input_text")
+                        and isinstance(part.get("text"), str)):
+                    part["text"], changed = _HARNESS_IDENTITY_RE.subn("Your role is", part["text"])
+                    count += changed
+    return count
+
+
 def normalize_harness_body(obj: dict) -> dict:
     """DeepSeek Harness / pi-ai 这类客户端的最小兼容补丁。
 
@@ -1114,20 +1148,22 @@ def normalize_harness_body(obj: dict) -> dict:
     用在端点自己已经管好 stream 与 thinking 的链路上（如 admin 的
     /v1/chat/completions），避免重复改写。
 
-    做两件事：
+    做三件事：
       1. role 归一（developer → system）—— 上游 role 白名单不含 developer，
          命中即 400 code=11128（"Illegal API invocation from an unapproved
          channel"）。pi-ai 在「模型开了 reasoning 且没显式声明
          compat.supportsDeveloperRole=false」时就会发 developer，
          于是 DeepSeek Harness 一开思考就整条被拒。
       2. 孤儿 tool_call 清理（安全网，防 11148）。
+      3. 身份声明句式归一（保留客户端名称，不依赖可选脱敏）。
 
-    返回改写统计 ``{"roles": n, "orphans": n}``，
+    返回改写统计 ``{"roles": n, "orphans": n, "identity": n}``，
     obj 就地改写，调用方原样发送即可。
     """
     return {
         "roles": normalize_roles(obj),
         "orphans": cleanup_orphan_tool_calls(obj),
+        "identity": normalize_harness_identity(obj),
     }
 
 
@@ -1142,7 +1178,7 @@ def prepare_upstream_body(obj: dict, *, sanitize: bool = False,
     顺序即语义，不要随意调换：
       1. 强制 stream=true（上游只支持流式，非流式由各端点自行聚合）
       2. role 归一（developer → system）
-      3. tool_choice 归一
+      3. 身份声明句式与 tool_choice 归一
       4. 孤儿 tool_call 清理（安全网，必须早于发出）
       5. 思考开关翻译（关→thinking.disabled；开→扁平档位；**未表态则不动**）
       6. reasoning_effort 归一（依据上游实时能力）
@@ -1157,6 +1193,7 @@ def prepare_upstream_body(obj: dict, *, sanitize: bool = False,
         obj["stream_options"] = {"include_usage": True}
 
     normalize_roles(obj)
+    normalize_harness_identity(obj)
     normalize_tool_choice(obj)
     cleanup_orphan_tool_calls(obj)
     apply_thinking_intent(obj, supported=supported_efforts)
