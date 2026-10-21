@@ -71,6 +71,14 @@ button:focus-visible, summary:focus-visible { outline:2px solid var(--brand-ink)
 #actionTooltip strong { display:block; font-weight:500; }
 #actionTooltip span { display:block; color:var(--fg-muted); font-size:11px; margin-top:3px; white-space:pre-line; overflow-wrap:anywhere; }
 #actionTooltip[hidden] { display:none; }
+.model-promotion-row { display:flex; flex-wrap:wrap; gap:4px; margin-top:5px; }
+.model-promotion-row:empty { display:none; }
+.model-promotion-badge, #actionTooltip .model-promotion-badge { display:inline-flex; align-items:center; gap:4px; white-space:nowrap; width:max-content; font:10px/1.5 sans-serif; padding:0 5px; border:1px solid color-mix(in srgb,var(--promotion-color) 35%,transparent); border-radius:5px; color:var(--promotion-color); background:color-mix(in srgb,var(--promotion-color) 9%,transparent); vertical-align:middle; margin:0; }
+.model-promotion-badge i { font-size:9px; }
+.model-tooltip-title { display:flex!important; align-items:center; flex-wrap:wrap; gap:6px; }
+.model-promotion-footer { border-top:1px solid var(--border); padding-top:8px; margin-top:8px; color:var(--fg-muted); white-space:pre-line; overflow-wrap:anywhere; font-size:11px; line-height:1.7; }
+.model-original-price { color:var(--fg-subtle); font-size:11px; margin-right:7px; }
+:root[data-theme="dark"] .model-promotion-badge { filter:brightness(1.3); }
 .theme-controls { display:flex; align-items:center; gap:4px; margin-bottom:12px; color:var(--fg-muted); font-size:12px; }
 .theme-controls > span { margin-right:auto; }
 .theme-controls button { display:grid; place-items:center; width:32px; height:30px; border:1px solid transparent; border-radius:6px; background:transparent; color:var(--fg-muted); cursor:pointer; }
@@ -188,6 +196,17 @@ button:focus-visible, summary:focus-visible { outline:2px solid var(--brand-ink)
 .model-switch input:disabled + span { opacity:.5; }
 .model-name-preview { color:var(--fg-muted); font-size:12px; overflow-wrap:anywhere; }
 .share-address-select { flex:1; min-width:0; max-width:100%; background:var(--surface); color:var(--fg); }
+.share-address-select .ui-select { width:100%; }
+.share-address-select .ui-select-btn { border-color:var(--border); background:var(--surface); color:var(--fg); }
+.share-address-select .ui-select-opt.active { background:var(--brand-soft); color:var(--brand-ink); }
+.mobile-mode .api-share-row > #shareAddressLabel, .mobile-mode .api-share-row > #shareAddressWrap { grid-column:1/-1; width:100%; }
+.mobile-mode #shareAddress .ui-select-opt { min-height:40px; }
+.model-sort { display:inline-flex; align-items:center; gap:5px; color:var(--fg-muted); font-weight:500; white-space:nowrap; }
+.model-sort i { color:var(--fg-muted); opacity:.7; }
+.model-sort:hover, .model-sort.active, .model-sort.active i { color:var(--brand-ink); opacity:1; }
+.model-sort:focus-visible, .model-id-description:focus-visible { outline:2px solid var(--brand); outline-offset:3px; border-radius:3px; }
+.model-health-sorts { display:flex; flex-wrap:wrap; gap:4px 10px; margin-top:5px; max-width:280px; font-size:10px; }
+.model-id-description { cursor:help; }
 .model-health-cell { min-width:240px; font-size:12px; font-variant-numeric:tabular-nums; }
 .model-health-cell small { display:block; margin-top:3px; color:var(--fg-muted); font-size:11px; }
 .billing-state { display:block; margin-top:4px; font-size:11px; color:var(--fg-muted); cursor:help; }

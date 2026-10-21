@@ -17,11 +17,12 @@ datas = [(str(root / 'admin/static'), 'admin/static'),
          (str(root / 'desktop/assets/app.svg'), 'desktop/assets'),
          (str(root / 'LICENSE'), '.')]
 datas += collect_data_files('webview')
+datas += collect_data_files('tzdata')
 hidden = collect_submodules('admin') + collect_submodules('desktop')
 hidden += ['uvicorn.logging', 'uvicorn.loops.asyncio', 'uvicorn.protocols.http.h11_impl',
            'uvicorn.lifespan.on', 'sqlalchemy.dialects.sqlite', 'sqlalchemy.dialects.mysql.pymysql',
            'converter', 'anthropic_adapter', 'responses_adapter', 'responses_projection',
-           'desensitize', 'upstream_compat', 'wb_install', 'wb_asar', 'wb_envcheck',
+           'desensitize', 'upstream_compat', 'model_metadata', 'wb_install', 'wb_asar', 'wb_envcheck',
            'webview.platforms.edgechromium', 'webview.platforms.winforms', 'clr', 'pythonnet',
            # Tray shell: pystray loads its backend lazily, so collect them explicitly.
            'pystray._win32', 'pystray._util', 'PIL.Image', 'PIL.ImageDraw', 'PIL._tkinter_finder']

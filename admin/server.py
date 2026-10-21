@@ -25,6 +25,7 @@ from admin.security import (
 )
 from admin.gateway_limits import GatewayAdmissionMiddleware
 from admin.routers import releases
+from admin.routers import audio
 from admin.routers import growth_center
 from admin.routers import benefits
 from admin import credit_journal  # register transactional balance observations
@@ -136,6 +137,7 @@ app.include_router(accounts.router)
 app.include_router(keys.router)
 app.include_router(models.router)
 app.include_router(proxy.router)
+app.include_router(audio.router)
 app.include_router(sync.router)
 app.include_router(schedules.router)
 app.include_router(logs.router)

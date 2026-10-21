@@ -332,7 +332,8 @@ class TimingMiddleware:
         self.persist = persist
 
     async def __call__(self, scope, receive, send):
-        if scope['type'] != 'http' or not scope.get('path', '').startswith('/v1/'):
+        if (scope['type'] != 'http' or not scope.get('path', '').startswith('/v1/')
+                or scope.get('path', '').rstrip('/') == '/v1/audio/transcriptions'):
             return await self.app(scope, receive, send)
         start = time.perf_counter()
         record = {'id': uuid.uuid4().hex, 'path': scope['path'],

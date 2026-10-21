@@ -875,8 +875,8 @@
         </div>
         <div class="grid gap-2 text-sm api-share-grid">
           <div class="flex items-center gap-2 flex-wrap api-share-row">
-            <label for="shareAddress" class="text-slate-400 w-32 shrink-0">连接地址</label>
-            <select id="shareAddress" onchange="renderShareAddress(this.value)" class="share-address-select border rounded-lg px-2 py-2 text-sm"></select>
+            <label id="shareAddressLabel" class="text-slate-400 w-32 shrink-0">连接地址</label>
+            <div id="shareAddressWrap" class="share-address-select"></div>
           </div>
           <div id="shareNetworkStatus" class="text-xs text-slate-400" role="status"></div>
           <div class="flex items-center gap-2 flex-wrap api-share-row">
@@ -910,6 +910,12 @@
           <details class="text-xs text-slate-500">
             <summary class="cursor-pointer text-wb select-none">接入示例 · Claude Code / Anthropic 协议（curl）</summary>
             <pre id="shareCurlClaude" class="api-example mt-2 rounded-lg p-3 overflow-x-auto text-[11px] whitespace-pre"></pre>
+          </details>
+          <details class="text-xs text-slate-500">
+            <summary class="cursor-pointer text-wb select-none">接入示例 · 语音转文字（OpenAI 兼容）</summary>
+            <p class="mt-2 leading-relaxed">POST <code>/v1/audio/transcriptions</code>，使用同一 API Key。以 multipart/form-data 上传 <code>file</code>，<code>model=workbuddy-asr</code>。<code>response_format</code> 可选 json（默认，返回 <code>{"text":"识别内容"}</code>）或 text。网关文件上限 25 MiB，不支持 language、prompt、时间戳或流式转写。无语音时成功返回空文本，不保存音频、转写内容及调用日志。沿用 Key 状态、配额准入、频率与并发限制；绑定 Key 使用绑定账号，公共 Key 使用健康账号池。上游限额仍以上游为准。</p>
+            <pre id="shareCurlAudio" class="api-example mt-2 rounded-lg p-3 overflow-x-auto text-[11px] whitespace-pre"></pre>
+            <pre id="sharePythonAudio" class="api-example mt-2 rounded-lg p-3 overflow-x-auto text-[11px] whitespace-pre"></pre>
           </details>
         </div>
       </div>
@@ -954,16 +960,13 @@
         <label class="model-switch" title="在模型列表接口返回的 name 中拼接倍率"><input id="modelShowMultiplier" type="checkbox" role="switch" checked onchange="saveModelDisplay()"><span></span>显示倍率</label>
         <label class="model-switch" title="在模型列表接口返回的 name 中拼接繁忙程度"><input id="modelShowBusy" type="checkbox" role="switch" checked onchange="saveModelDisplay()"><span></span>显示繁忙程度</label>
         <code id="modelNamePreview" class="model-name-preview"></code>
-        <button type="button" onclick="loadModelHealth()" class="console-btn quiet" title="刷新最近 24 小时模型健康统计"><i class="fa-solid fa-rotate"></i>刷新健康状态</button>
+        <button type="button" id="modelHealthRefresh" onclick="loadModelHealth(true)" class="console-btn quiet" title="刷新最近 24 小时模型健康统计"><i class="fa-solid fa-rotate"></i>刷新健康状态</button>
       </div>
       <div class="card overflow-x-auto max-h-[70vh]">
         <table class="tbl min-w">
           <thead class="bg-slate-50 text-slate-500 text-left sticky top-0">
             <tr>
-              <th class="px-4 py-3">模型 ID</th><th class="px-4 py-3">级别</th>
-              <th class="px-4 py-3 model-mult-column"><button type="button" onclick="toggleModelSort()" id="thModelMult"
-                class="inline-flex items-center gap-1 hover:text-slate-700 font-medium" title="点击切换倍率排序（升序 → 降序 → 默认）">倍率 <i class="fa-solid fa-sort text-slate-300"></i></button></th>
-              <th class="px-4 py-3 model-busy-column">繁忙程度</th><th class="px-4 py-3">延迟与健康</th><th class="px-4 py-3">备注</th><th class="px-4 py-3">状态</th><th class="px-4 py-3 text-right">操作</th>
+              <th class="px-4 py-3"><button type="button" class="model-sort" data-model-sort="id" onclick="toggleModelSort('id')" title="模型 ID：升序 → 降序 → 默认" >模型 ID <i class="fa-solid fa-sort" aria-hidden="true"></i></button></th><th class="px-4 py-3"><button type="button" class="model-sort" data-model-sort="level" onclick="toggleModelSort('level')" title="级别：升序 → 降序 → 默认" >级别 <i class="fa-solid fa-sort" aria-hidden="true"></i></button></th><th class="px-4 py-3 model-mult-column"><button type="button" class="model-sort" data-model-sort="mult" onclick="toggleModelSort('mult')" title="倍率：升序 → 降序 → 默认" >倍率 <i class="fa-solid fa-sort" aria-hidden="true"></i></button></th><th class="px-4 py-3 model-busy-column"><button type="button" class="model-sort" data-model-sort="busy" onclick="toggleModelSort('busy')" title="繁忙程度：升序 → 降序 → 默认" >繁忙程度 <i class="fa-solid fa-sort" aria-hidden="true"></i></button></th><th class="px-4 py-3"><span>延迟与健康</span><div class="model-health-sorts"><button type="button" class="model-sort" data-model-sort="success" onclick="toggleModelSort('success')" title="成功率：升序 → 降序 → 默认" >成功率 <i class="fa-solid fa-sort" aria-hidden="true"></i></button><button type="button" class="model-sort" data-model-sort="requests" onclick="toggleModelSort('requests')" title="次数：升序 → 降序 → 默认" >次数 <i class="fa-solid fa-sort" aria-hidden="true"></i></button><button type="button" class="model-sort" data-model-sort="p50" onclick="toggleModelSort('p50')" title="P50：升序 → 降序 → 默认" >P50 <i class="fa-solid fa-sort" aria-hidden="true"></i></button><button type="button" class="model-sort" data-model-sort="p95" onclick="toggleModelSort('p95')" title="P95：升序 → 降序 → 默认" >P95 <i class="fa-solid fa-sort" aria-hidden="true"></i></button><button type="button" class="model-sort" data-model-sort="jitter" onclick="toggleModelSort('jitter')" title="波动：升序 → 降序 → 默认" >波动 <i class="fa-solid fa-sort" aria-hidden="true"></i></button><button type="button" class="model-sort" data-model-sort="accounts" onclick="toggleModelSort('accounts')" title="可用账号：升序 → 降序 → 默认" >可用账号 <i class="fa-solid fa-sort" aria-hidden="true"></i></button></div></th><th class="px-4 py-3"><button type="button" class="model-sort" data-model-sort="note" onclick="toggleModelSort('note')" title="备注：升序 → 降序 → 默认" >备注 <i class="fa-solid fa-sort" aria-hidden="true"></i></button></th><th class="px-4 py-3"><button type="button" class="model-sort" data-model-sort="enabled" onclick="toggleModelSort('enabled')" title="状态：升序 → 降序 → 默认" >状态 <i class="fa-solid fa-sort" aria-hidden="true"></i></button></th><th class="px-4 py-3 text-right">操作</th>
             </tr>
           </thead>
           <tbody id="modelBody"></tbody>
@@ -1479,6 +1482,7 @@
 
 <link rel="stylesheet" href="/static/phone-region.css" />
 <script src="/static/phone-session.js"></script>
+<script src="/static/model-metadata.js"></script>
 <script>
 let _confirmResolve = null;
 
@@ -1555,7 +1559,7 @@ function uiSelectHTML(id, opts) {
     <div class="ui-select-panel">
       ${options.map(o => `
         <div class="ui-select-opt ${String(o.value) === val ? "sel" : ""}"
-             data-value="${esc(String(o.value))}" onclick="uiSelectPick('${id}','${esc(String(o.value))}', event)">
+             data-value="${esc(String(o.value))}" onclick="uiSelectPick('${id}',this.dataset.value,event)">
           <span class="truncate">${esc(o.label)}</span>
           ${String(o.value) === val ? '<i class="fa-solid fa-check"></i>' : ""}
         </div>`).join("") || '<div class="ui-select-opt text-slate-400">无可选项</div>'}
@@ -2174,7 +2178,10 @@ function showActionTooltip(target, immediate = false) {
       tip.addEventListener('pointerleave', scheduleActionTooltipHide);
       document.body.appendChild(tip);
     }
-    tip.innerHTML = `<strong>${esc(target.dataset.tooltip)}</strong><span>${esc(target.dataset.tooltipDescription || '')}</span>`;
+    const model=_modelData.find(m=>m.model_id===target.dataset.modelTooltip);
+    const info=model?WBModelMetadata.display(model):null;
+    tip.innerHTML = info ? `<strong class="model-tooltip-title">${esc(info.name)} ${modelPromotionBadges(info)}</strong><span>${esc(info.description||'上游暂未提供模型描述')}</span>${info.footer?`<div class="model-promotion-footer">${esc(info.footer)}</div>`:''}`
+      : `<strong>${esc(target.dataset.tooltip)}</strong><span>${esc(target.dataset.tooltipDescription || '')}</span>`;
     tip.hidden = false;
     target.setAttribute('aria-describedby', 'actionTooltip');
     const r = target.getBoundingClientRect(), t = tip.getBoundingClientRect();
@@ -4215,7 +4222,7 @@ async function loadKeys(){
 }
 /* 对外对接信息：暴露 baseurl + 启用模型列表，供把 Key 共享给外部使用 */
 async function loadShareInfo() {
-  const selected = $('#shareAddress')?.value;
+  const selected = uiSelectValue('shareAddress');
   const choices = new Map([[location.origin, '当前访问 · ' + location.host]]);
   let status = '';
   try {
@@ -4228,11 +4235,12 @@ async function loadShareInfo() {
     for (const ip of network.lan_ips || []) choices.set('http://' + ip + suffix, '局域网 · ' + ip + suffix);
     if (!(network.lan_ips || []).length) status = '未检测到内网 IPv4，请检查 Wi-Fi 或有线网络连接。';
   } catch (_) { status = '内网地址读取失败，可点击刷新重试。'; }
-  const picker = $('#shareAddress');
+  const picker = $('#shareAddressWrap');
   if (picker) {
-    picker.replaceChildren(...[...choices].map(([value,label]) => new Option(label, value)));
-    picker.value = choices.has(selected) ? selected : location.origin;
-    renderShareAddress(picker.value);
+    const value = choices.has(selected) ? selected : location.origin;
+    picker.innerHTML = uiSelectHTML('shareAddress', {value, options:[...choices].map(([value,label])=>({value,label})), onChange:renderShareAddress});
+    initUISelects([['shareAddress','连接地址']]);
+    renderShareAddress(value);
   }
   if ($('#shareNetworkStatus')) $('#shareNetworkStatus').textContent = status;
   try {
@@ -4257,6 +4265,20 @@ function renderShareAddress(origin) {
   const base = origin + "/v1";
   if ($("#shareBaseUrl")) $("#shareBaseUrl").textContent = base;
   if ($("#shareBaseUrlClaude")) $("#shareBaseUrlClaude").textContent = origin;
+  if ($('#shareCurlAudio')) $('#shareCurlAudio').textContent = [
+    `curl "${base}/audio/transcriptions"`,
+    '  -H "Authorization: Bearer <你的 Key>"',
+    '  -F "file=@recording.webm"',
+    '  -F "model=workbuddy-asr"',
+    '  -F "response_format=json"'
+  ].join(' \\\n');
+  if ($('#sharePythonAudio')) $('#sharePythonAudio').textContent = [
+    'from openai import OpenAI',
+    `client = OpenAI(api_key="<你的 Key>", base_url="${base}")`,
+    'with open("recording.webm", "rb") as audio:',
+    '    result = client.audio.transcriptions.create(model="workbuddy-asr", file=audio)',
+    'print(result.text)'
+  ].join('\n');
   if ($("#shareCurl")) {
     $("#shareCurl").textContent =
       "curl " + base + "/chat/completions \\\n" +
@@ -4455,14 +4477,38 @@ async function deleteKey(id){ if(!await uiConfirm({message:"确认删除该 Key�
 const MODEL_BUSY_LABELS = {idle:'空闲', normal:'空闲', busy:'轻微拥堵', congested:'极度拥堵', unavailable:'不可用', unknown:'未知'};
 let _modelBusy = {}, _modelBusyTimer = null, _modelBusyLoading = false;
 let _modelHealth = {}, _modelProbes = {}, _modelProbeBusy = false;
-async function loadModelHealth() {
+let _modelHealthLoading = null;
+async function loadModelHealth(manual = false) {
+  const button = $('#modelHealthRefresh');
+  if (manual && button) { button.disabled = true; button.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>正在刷新…'; }
+  try {
+    if (!_modelHealthLoading) _modelHealthLoading = fetchModelHealth();
+    await _modelHealthLoading;
+    if (manual) toast('模型健康状态已刷新（最近 24 小时统计）');
+  } catch (error) { toast(error.message, 'err'); }
+  finally {
+    _modelHealthLoading = null;
+    if (manual && button) { button.disabled = false; button.innerHTML = '<i class="fa-solid fa-rotate"></i>刷新健康状态'; }
+  }
+}
+async function fetchModelHealth() {
   try {
     const response = await api('/api/stats/model-health');
     if (!response.ok) throw new Error('无法读取模型健康状态');
     const result = await response.json();
     _modelHealth = Object.fromEntries((result.items || []).map(row => [row.model, row]));
     renderModelPage(_modelPage);
-  } catch (error) { toast(error.message, 'err'); }
+  } catch (error) { throw error; }
+}
+async function loadModelDescriptions() {
+  try {
+    const response = await api('/api/models/descriptions');
+    if (!response.ok) return;
+    const result = await response.json();
+    const descriptions = new Map((result.items || []).map(m=>[m.model_id,m]));
+    _modelData.forEach(m=>{ if(descriptions.has(m.model_id)) Object.assign(m,descriptions.get(m.model_id)); });
+    renderModelPage(_modelPage);
+  } catch (_) {}
 }
 function modelHealthCell(model) {
   const row = _modelHealth[model] || {}, probe = _modelProbes[model];
@@ -4523,16 +4569,37 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden) loadModelBusy();
   scheduleModelBusy();
 });
+function modelPromotionBadges(info) {
+  return info.badges.map(b=>{
+    const color=/^#[0-9a-f]{6}$/i.test(b.color||'')?b.color:'var(--brand-ink)';
+    const label=b.shortLabel||b.label;
+    const icon=String(b.label).includes('夜间')?'fa-moon':String(b.label).includes('免费')||String(b.label).includes('限免')?'fa-gift':'fa-tag';
+    return `<span class="model-promotion-badge" style="--promotion-color:${color}"><i class="fa-solid ${icon}" aria-hidden="true"></i>${esc(label)}</span>`;
+  }).join('');
+}
+// Re-evaluate on minute boundaries, including when a hidden window resumes.
+function refreshModelPromotions(){
+  if(!document.hidden&&_modelData.length&&!$('#panel-models').classList.contains('hidden')) renderModelPage(_modelPage);
+}
+function schedulePromotionRefresh(){
+  setTimeout(()=>{refreshModelPromotions();schedulePromotionRefresh();},60000-Date.now()%60000+50);
+}
+schedulePromotionRefresh();
+window.addEventListener('focus',refreshModelPromotions);
+window.addEventListener('pageshow',refreshModelPromotions);
+document.addEventListener('visibilitychange',refreshModelPromotions);
 function modelRow(m) {
-  const isFree = m.is_free || (m.credit_multiplier||0) === 0;
-  const mult = m.credit_multiplier || 0;
+  const info=WBModelMetadata.display(m);
+  const isFree = info.price === 0;
+  const mult = info.price;
   const multDisplay = isFree ? '<span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700">FREE</span>'
-    : `<span class="text-amber-600 font-medium">×${mult.toFixed(2)}</span>`;
+    : `<span class="text-amber-600 font-medium">${mult==null?'未知':'×'+mult.toFixed(2)}</span>`;
+  const original=info.discountMode==='strikethrough'&&info.base!=null&&info.base!==mult?`<del class="model-original-price">×${info.base.toFixed(2)}</del>`:'';
   return `
     <tr class="border-t hover:bg-slate-50">
-      <td class="px-4 py-3 font-mono text-xs">${esc(m.model_id)}</td>
+      <td class="px-4 py-3 font-mono text-xs"><span tabindex="0" class="model-id-description" data-model-tooltip="${esc(m.model_id)}" data-tooltip="${esc(m.model_id)}" data-tooltip-description="${esc(info.description || '上游暂未提供模型描述')}">${esc(m.model_id)}</span><div class="model-promotion-row">${modelPromotionBadges(info)}</div></td>
       <td class="px-4 py-3">${m.level==='system'?'<span class="px-2 py-0.5 rounded text-[10px] bg-blue-100 text-blue-700">系统</span>':'<span class="px-2 py-0.5 rounded text-[10px] bg-purple-100 text-purple-700">用户</span>'}</td>
-      <td class="px-4 py-3 model-mult-column">${multDisplay}</td>
+      <td class="px-4 py-3 model-mult-column">${original}${multDisplay}</td>
       <td class="px-4 py-3 whitespace-nowrap model-busy-column">${modelBusyBadge(m)}</td>
       <td class="px-4 py-3">${modelHealthCell(m.model_id)}</td>
       <td class="px-4 py-3 text-slate-400 text-xs">${esc(m.note||'-')}</td>
@@ -4544,34 +4611,54 @@ function modelRow(m) {
       </td>
     </tr>`;
 }
-// 倍率排序：升序 → 降序 → 默认，循环切换
-function toggleModelSort(){
-  _modelSort = _modelSort === "mult_asc" ? "mult_desc"
-             : _modelSort === "mult_desc" ? "default" : "mult_asc";
-  try { localStorage.setItem("wb_model_sort", _modelSort); } catch(e) {}
-  updateModelSortIcon();
-  renderModelPage(1);  // 排序后回到第一页，避免停在中段看不到结果
+const MODEL_SORT_FIELDS = ['id','level','mult','busy','success','requests','p50','p95','jitter','accounts','note','enabled'];
+function toggleModelSort(field = 'mult'){
+  if(!MODEL_SORT_FIELDS.includes(field)) return;
+  _modelSort = _modelSort === field+'_asc' ? field+'_desc' : _modelSort === field+'_desc' ? 'default' : field+'_asc';
+  try { localStorage.setItem('wb_model_sort',_modelSort); } catch(_) {}
+  updateModelSortIcon(); renderModelPage(1);
 }
-// 表头箭头指示当前排序方向
 function updateModelSortIcon(){
-  const btn = document.getElementById("thModelMult");
-  if(!btn) return;
-  const icon = btn.querySelector("i");
-  icon.className = _modelSort === "mult_asc" ? "fa-solid fa-sort-up text-indigo-500"
-                 : _modelSort === "mult_desc" ? "fa-solid fa-sort-down text-indigo-500"
-                 : "fa-solid fa-sort text-slate-300";
-  btn.classList.toggle("text-indigo-600", _modelSort !== "default");
+  document.querySelectorAll('[data-model-sort]').forEach(button=>{
+    const field=button.dataset.modelSort, active=_modelSort.startsWith(field+'_');
+    const direction=active?(_modelSort.endsWith('_asc')?'ascending':'descending'):'none';
+    button.classList.toggle('active',active);
+    button.setAttribute('aria-label',button.textContent.trim()+'，'+(direction==='none'?'未排序':direction==='ascending'?'升序':'降序'));
+    button.querySelector('i').className='fa-solid '+(active?(direction==='ascending'?'fa-sort-up':'fa-sort-down'):'fa-sort');
+    button.closest('th').setAttribute('aria-sort',direction);
+  });
+  // The health column offers several independent sort fields.
+  const selected=document.querySelector('[data-model-sort].active');
+  if(selected) selected.closest('th').setAttribute('aria-sort',_modelSort.endsWith('_asc')?'ascending':'descending');
 }
 function sortModelData(list){
-  if(_modelSort === "default") return list;
-  // 倍率缺失(null/undefined)按 0 处理，避免比较结果不稳定
-  const val = m => (m.credit_multiplier == null ? 0 : Number(m.credit_multiplier));
-  const dir = _modelSort === "mult_asc" ? 1 : -1;
-  // 复制后排序，不改动原数组（原数组还要供其它操作复用）
-  return list.slice().sort((a,b) => {
-    const d = (val(a) - val(b)) * dir;
-    if(d !== 0) return d;
-    return (a.model_id || "").localeCompare(b.model_id || "");  // 同倍率按 ID 稳定排序
+  if(_modelSort === 'default') return list;
+  const [field,order]=_modelSort.split('_'), dir=order==='asc'?1:-1;
+  const value=m=>{
+    const health=_modelHealth[m.model_id]||{}, ttft=health.ttfb_ms||{};
+    switch(field){
+      case 'id':return m.model_id||'';
+      case 'level':return m.level==='system'?0:1;
+      case 'mult':return WBModelMetadata.display(m).price;
+      case 'busy':return ({idle:0,normal:0,busy:1,congested:2,unavailable:3})[_modelBusy[m.model_id]?.busy_level] ?? null;
+      case 'success':return health.requests ? health.success_rate : null;
+      case 'requests':return health.requests ?? 0;
+      case 'p50':return ttft.p50 ?? null;
+      case 'p95':return ttft.p95 ?? null;
+      case 'jitter':return ttft.p95==null||ttft.p50==null?null:ttft.p95-ttft.p50;
+      case 'accounts':return health.available_accounts ?? null;
+      case 'note':return m.note||'';
+      case 'enabled':return Number(Boolean(m.enabled));
+      default:return null;
+    }
+  };
+  return list.slice().sort((a,b)=>{
+    const av=value(a),bv=value(b);
+    // Missing observations stay at the end in both directions.
+    if(av==null&&bv!=null) return 1;
+    if(bv==null&&av!=null) return -1;
+    const delta=av==null?0:typeof av==='string'?av.localeCompare(bv,'zh-CN',{numeric:true}):av-bv;
+    return delta*dir||(a.model_id||'').localeCompare(b.model_id||'')||a.id-b.id;
   });
 }
 async function loadModels(){
@@ -4587,11 +4674,11 @@ async function loadModels(){
   try { _modelPage = parseInt(localStorage.getItem("wb_model_page") || "1") || 1; } catch(e) {}
   try {
     const s = localStorage.getItem("wb_model_sort");
-    if(s === "mult_asc" || s === "mult_desc" || s === "default") _modelSort = s;
+    if(s === 'default' || MODEL_SORT_FIELDS.some(field=>s===field+'_asc'||s===field+'_desc')) _modelSort = s;
   } catch(e) {}
   updateModelSortIcon();
   renderModelPage(_modelPage);
-  loadModelBusy();
+  loadModelBusy().finally(loadModelDescriptions);
 }
 function renderModelPage(p) {
   const term = (_modelTerm = ($("#modelSearch") ? $("#modelSearch").value : "").trim().toLowerCase());
@@ -5425,7 +5512,10 @@ function scheduleForm(title, data){
   initScheduleSelects();
 }
 function initScheduleSelects(){
-  for(const [id,label] of [['scTask','任务类型'],['scCycle','执行周期'],['scUnit','间隔单位']]){
+  initUISelects([['scTask','任务类型'],['scCycle','执行周期'],['scUnit','间隔单位']]);
+}
+function initUISelects(entries){
+  for(const [id,label] of entries){
     const select = document.getElementById(id), trigger = select.querySelector('.ui-select-btn');
     trigger.tabIndex = 0; trigger.setAttribute('role','combobox');
     trigger.setAttribute('aria-label',label); trigger.setAttribute('aria-haspopup','listbox');
@@ -5440,6 +5530,7 @@ function initScheduleSelects(){
       const options = [...select.querySelectorAll('.ui-select-opt')];
       const keys = ['ArrowDown','ArrowUp','Home','End','Enter',' ','Escape','Tab'];
       if(!keys.includes(event.key)) return;
+      if(!options.length) return;
       const opened = select.classList.contains('open');
       if(event.key==='Tab'){ select.classList.remove('open'); return; }
       if(event.key==='Escape'){

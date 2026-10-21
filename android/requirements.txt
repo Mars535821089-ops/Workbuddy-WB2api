@@ -12,3 +12,4 @@ PyJWT==2.10.1
 cryptography==42.0.8
 python-dotenv==1.1.0
 packaging==25.0
+tzdata==2026.5

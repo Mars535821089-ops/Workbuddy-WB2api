@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 import anyio
+import model_metadata
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.requests import ClientDisconnect
@@ -3966,11 +3967,20 @@ def models(
     if os.getenv("WORKBUDDY_ANDROID") == "1" and not aid:
         # Reuse the local model rules also displayed in the admin model screen.
         if configs:
-            data = [{'id': row.model_id, 'object': 'model', 'owned_by': 'codebuddy',
-                     'name': row.note or row.model_id,
-                     'credit_multiplier': row.credit_multiplier}
-                    for row in configs if row.enabled and
-                    (allowed is None or row.model_id in allowed)]
+            from admin.routers.models import _stored_metadata
+            data = []
+            for row in configs:
+                if not row.enabled or (allowed is not None and row.model_id not in allowed):
+                    continue
+                meta = _stored_metadata(row)
+                if not meta.get('credits'):
+                    meta['credits'] = row.credits_raw or f'x{row.credit_multiplier or 0}'
+                data.append({**meta, **model_metadata.promotion_display(meta),
+                             'id': row.model_id, 'object': 'model', 'owned_by': 'codebuddy',
+                             'name': row.note or row.model_id,
+                             'display_name': meta.get('name') or row.note or row.model_id,
+                             'description': row.description or '',
+                             'base_credit_multiplier': row.credit_multiplier})
             from admin.model_listing import format_entries, display_options
             data = format_entries(data, options=display_options(db))
             return {'object': 'list', 'data': data, 'source': 'local'}
@@ -4006,7 +4016,10 @@ def models(
                         data = [{
                             "id": m.get("id"), "object": "model", "owned_by": "codebuddy",
                             "name": m.get("name") or m.get("id"),
-                            "credit_multiplier": backend.CredentialManager._parse_credit_multiplier(m.get("credits"))
+                            **model_metadata.metadata(m),
+                            **model_metadata.promotion_display(m),
+                            "display_name": m.get("name") or m.get("id"),
+                            "base_credit_multiplier": backend.CredentialManager._parse_credit_multiplier(m.get("credits"))
                             if hasattr(backend.CredentialManager, "_parse_credit_multiplier") else None,
                         } for m in models_raw
                             if m.get("id") and m.get("id", "").lower() != "auto"

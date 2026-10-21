@@ -50,6 +50,10 @@ def main():
             with TestClient(app) as client:
                 assert client.get('/api/app/version').status_code == 200
                 assert client.get('/admin').status_code == 200
+                assert client.get('/static/model-metadata.js').status_code == 200
+                assert client.post('/v1/audio/transcriptions').status_code == 401
+                from zoneinfo import ZoneInfo
+                assert str(ZoneInfo('Asia/Shanghai')) == 'Asia/Shanghai'
                 headers = {'X-Admin-Token': create_admin_token()}
                 import jwt
                 from admin.config import settings

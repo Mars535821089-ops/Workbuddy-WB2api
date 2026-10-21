@@ -23,6 +23,7 @@ from admin.config import settings
 from admin.db import get_db
 from admin.models import Account, ModelConfig
 from admin.security import require_admin
+from model_metadata import metadata, credit_number
 
 router = APIRouter(prefix="/api/models", tags=["models"])
 _sync_lock = threading.Lock()
@@ -105,6 +106,8 @@ def list_configs(
                 "model_id": m.model_id,
                 "enabled": bool(m.enabled),
                 "note": m.note,
+                "description": m.description or "",
+                "metadata": _stored_metadata(m),
                 "credit_multiplier": m.credit_multiplier or 0,
                 "credits_raw": m.credits_raw or "",
                 "is_free": (m.credit_multiplier or 0) == 0,
@@ -113,6 +116,54 @@ def list_configs(
             for m in rows
         ]
     }
+
+
+def _description(model):
+    value = model.get("descriptionZh") or model.get("descriptionEn") or model.get("description") or ""
+    return value if isinstance(value, str) else ""
+
+
+def _stored_metadata(row):
+    try:
+        value = json.loads(row.upstream_metadata or "{}")
+        return value if isinstance(value, dict) else {}
+    except (ValueError, TypeError):
+        return {}
+
+
+_description_checked = {}
+
+
+@router.get("/descriptions")
+def model_descriptions(_: bool = Depends(require_admin), db: Session = Depends(get_db)):
+    # Refresh metadata without adding models or changing user configuration.
+    candidates = scope_accounts(db.query(Account)).filter(Account.status == "active").order_by(Account.id).all()
+    scope = tuple((a.id, a.uid) for a in candidates)
+    with _sync_lock:
+        if time.monotonic() - _description_checked.get(scope, -float("inf")) >= 300:
+            try:
+                catalog = _fetch_catalog(db)
+                descriptions = {m.get("id"): m for m in catalog}
+                for row in db.query(ModelConfig).all():
+                    model = descriptions.get(row.model_id)
+                    if model:
+                        row.description = _description(model)
+                        row.upstream_metadata = json.dumps(metadata(model), ensure_ascii=False)
+                        price = credit_number(model.get("credits"))
+                        if price is not None:
+                            row.credit_multiplier = price
+                            row.credits_raw = str(model["credits"])
+                db.commit()
+                _description_checked[scope] = time.monotonic()
+                if len(_description_checked) > 128:
+                    _description_checked.pop(next(iter(_description_checked)))
+            except HTTPException:
+                db.rollback()
+                raise
+        return {"items": [{"model_id": m.model_id, "description": m.description or "",
+                           "metadata": _stored_metadata(m), "credit_multiplier": m.credit_multiplier,
+                           "credits_raw": m.credits_raw}
+                          for m in db.query(ModelConfig).all()]}
 
 
 @router.get("/busy")
@@ -131,6 +182,49 @@ def _do_sync_models(db: Session, account_id: int | None = None) -> dict:
         return _sync_models_locked(db, account_id)
 
 
+def _fetch_catalog(db, account_id=None):
+    query = db.query(Account).filter(Account.status == "active")
+    if account_id is not None:
+        query = query.filter(Account.id == account_id)
+    else:
+        query = scope_accounts(query)
+    candidates = query.order_by(Account.balance_remain.desc(), Account.id.asc()).all()
+    if not candidates:
+        raise HTTPException(status_code=503, detail="无可用账号（无法连接后端获取模型列表）")
+    last_error = None
+    attempts = 0
+    for acc in candidates:
+        try:
+            from admin import maintenance
+            with maintenance.account_slot(acc, db) as reason:
+                if reason:
+                    continue
+                attempts += 1
+                original = acc.auth_json
+                with backend.AccountSession(original) as sess:
+                    try:
+                        models_raw = sess.fetch_models()
+                    finally:
+                        updated_auth = sess.updated_json()
+                        db.query(Account).filter(Account.id == acc.id, Account.auth_json == original).update(
+                            {Account.auth_json: updated_auth}, synchronize_session=False)
+                        db.commit()
+                break
+        except Exception as error:
+            db.rollback()
+            maintenance.note_failure(db, acc, error)
+            db.commit()
+            last_error = error
+            if attempts >= 3:
+                raise HTTPException(status_code=502, detail="获取模型目录失败，请稍后重试")
+    else:
+        if last_error is None:
+            raise HTTPException(status_code=503, detail="账号处于保护或在途占用，稍后同步模型")
+        raise HTTPException(status_code=502, detail="获取模型目录失败，请稍后重试")
+
+    return models_raw
+
+
 def _sync_models_locked(db: Session, account_id: int | None = None) -> dict:
     """从后端拉取可用模型列表并同步到本地数据库（upsert）。
 
@@ -139,37 +233,7 @@ def _sync_models_locked(db: Session, account_id: int | None = None) -> dict:
     # A newly imported account can have a stale/empty local balance until its
     # background refresh completes.  Model discovery only needs a valid token,
     # so do not reject it based on the cached credit value.
-    query = db.query(Account).filter(Account.status == "active")
-    if account_id is not None:
-        query = query.filter(Account.id == account_id)
-    else:
-        query = scope_accounts(query)
-    candidates = query.order_by(Account.balance_remain.desc(), Account.id.asc()).limit(3).all()
-    if not candidates:
-        raise HTTPException(status_code=503, detail="无可用账号（无法连接后端获取模型列表）")
-    last_error = None
-    for acc in candidates:
-        try:
-            from admin import maintenance
-            with maintenance.account_slot(acc, db) as reason:
-                if reason:
-                    continue
-                original = acc.auth_json
-                with backend.AccountSession(original) as sess:
-                    models_raw = sess.fetch_models()
-                    updated_auth = sess.updated_json()
-                db.query(Account).filter(Account.id == acc.id, Account.auth_json == original).update(
-                    {Account.auth_json: updated_auth}, synchronize_session=False)
-                db.commit()
-                break
-        except Exception as error:
-            db.rollback()
-            maintenance.note_failure(db, acc, error)
-            last_error = error
-    else:
-        if last_error is None:
-            raise HTTPException(status_code=503, detail="账号处于保护或在途占用，稍后同步模型")
-        raise HTTPException(status_code=502, detail=f"获取模型列表失败: {last_error}")
+    models_raw = _fetch_catalog(db, account_id)
 
     import re
 
@@ -182,7 +246,7 @@ def _sync_models_locked(db: Session, account_id: int | None = None) -> dict:
             continue  # 跳过上游聚合模型 "auto"，我们系统有自己的免费优先 auto 逻辑
         # 解析积分倍率
         raw_credits = m.get("credits") or ""
-        multiplier = 0.0
+        multiplier = credit_number(raw_credits) or 0.0
         if raw_credits:
             cre_match = re.search(r"x\s*([0-9]+(?:\.[0-9]+)?)", str(raw_credits))
             if cre_match:
@@ -196,6 +260,8 @@ def _sync_models_locked(db: Session, account_id: int | None = None) -> dict:
             if mc:
                 mc.credit_multiplier = multiplier
                 mc.credits_raw = str(raw_credits)
+                mc.description = _description(m)
+                mc.upstream_metadata = json.dumps(metadata(m), ensure_ascii=False)
                 if not mc.note:
                     mc.note = m.get("name") or ""
                 updated += 1
@@ -208,6 +274,8 @@ def _sync_models_locked(db: Session, account_id: int | None = None) -> dict:
             note=m.get("name") or "",
             credit_multiplier=multiplier,
             credits_raw=str(raw_credits),
+            description=_description(m),
+            upstream_metadata=json.dumps(metadata(m), ensure_ascii=False),
         )
         db.add(mc)
         added += 1

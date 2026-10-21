@@ -243,6 +243,8 @@ class ModelConfig(Base):
     note = Column(String(255), default="")
     credit_multiplier = Column(Float, default=0)  # 积分消耗倍率；0=免费模型
     credits_raw = Column(String(120), default="")  # 原始 credits 字符串（如 "x0.05" / "x0.00 credits"）
+    description = Column(Text, default="")  # 官方模型说明，独立于用户备注
+    upstream_metadata = Column(Text, default="{}")  # 官方活动规则 / 名称，保留完整时间配置
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

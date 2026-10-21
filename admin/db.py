@@ -120,6 +120,8 @@ def init_db() -> bool:
         # 迁移：给 model_configs 表补齐倍率相关列（旧实例可能缺）
         _ensure_column("model_configs", "credit_multiplier", "FLOAT", "DEFAULT 0")
         _ensure_column("model_configs", "credits_raw", "VARCHAR(120)", "DEFAULT ''")
+        _ensure_column("model_configs", "description", "TEXT", "")
+        _ensure_column("model_configs", "upstream_metadata", "TEXT", "")
 
         # 迁移：给 schedules 表加 stop_after 列（daily_checkin 任务的「停止领取时间」）
         _ensure_column("schedules", "stop_after", "DATETIME", "NULL")

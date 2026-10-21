@@ -6,6 +6,7 @@ sqlalchemy>=2.0
 pymysql
 redis
 python-multipart
+tzdata
 PyJWT
 cryptography
 # 从 .env 读取配置

@@ -443,6 +443,9 @@ class CredentialManager:
                 headers = self.get_headers()
         else:
             headers = self.get_headers()
+        if path == '/v3/config':
+            from admin.client_profile import risk_headers
+            headers.update(risk_headers())
         try:
             with httpx.Client(timeout=timeout, limits=_HTTP_LIMITS, **client_options) as c:
                 if method.upper() == "GET":
@@ -504,8 +507,7 @@ class CredentialManager:
           - 顶层 data.models 为对象数组（每项含 id/name/credits...）；
           - 仅 data.agents[].models 为字符串数组时，回退收集并去重。
         """
-        eid = self._enterprise_path_key()
-        data = self._request_backend("GET", f"/v2/enterprises/{eid}/models")
+        data = self.fetch_models_raw()
         payload = data.get("data", {})
         models = payload.get("models")
         if isinstance(models, list) and models:
@@ -537,7 +539,15 @@ class CredentialManager:
         能力层需要完整结构，故单独提供本方法。
         """
         eid = self._enterprise_path_key()
-        return self._request_backend("GET", f"/v2/enterprises/{eid}/models")
+        raw = self._request_backend("GET", f"/v2/enterprises/{eid}/models")
+        # Product config supplies official descriptions, promotions and routing
+        # modes. A metadata outage must not take the entitled catalog offline.
+        from model_metadata import merge_product_catalog
+        try:
+            product = self._request_backend("GET", "/v3/config").get("data") or {}
+            return merge_product_catalog(raw, product)
+        except Exception:
+            return raw
 
     def generate_image(self, body: dict, timeout: float = 300.0) -> dict:
         """调后端生图接口 /v2/images/generations（同步返回）。

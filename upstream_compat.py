@@ -184,7 +184,9 @@ def _normalize_one(m: dict) -> dict:
         "supports_efforts": efforts,
         "default_effort": default_effort if default_effort in efforts else "",
         "credits": m.get("credits"),
-        "description": m.get("descriptionZh") or m.get("descriptionEn"),
+        "description": m.get("descriptionZh") or m.get("descriptionEn") or m.get("description"),
+        "promotions": m.get("promotions") or [],
+        "tier": m.get("tier"),
         "tags": m.get("tags") or [],
         "vendor": m.get("vendor"),
         "temperature": m.get("temperature"),
@@ -707,9 +709,11 @@ def backfill_reasoning_content(obj: dict) -> int:
 # 上游内容审核对若干客户端模板句做**逐字精确匹配**拦截（不是语义审核），
 # 因此改一个词即可绕过。
 # 固定模板兼容规则按内容匹配，所有客户端共用，不依赖 UA、模型或脱敏开关。
-# 只删已确认触发渠道误判的括号注释，保留 Main branch、分支名和 gitStatus。
+# 只删除触发误判的注释短语，不依赖分支标签、分支名或客户端。
 _PROMPT_TEMPLATE_REWRITES = (
-    ("Main branch (you will usually use this for PRs)", "Main branch"),
+    (" (you will usually use this for PRs)", ""),
+    ("(you will usually use this for PRs)", ""),
+    ("you will usually use this for PRs", ""),
 )
 
 SANITIZE_FEATURES = (
