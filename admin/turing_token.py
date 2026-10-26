@@ -25,6 +25,7 @@ TuringShieldSDK 原生桥接并返回 token。token 带进程内缓存（默认 
 """
 from __future__ import annotations
 
+import glob
 import json
 import os
 import shutil
@@ -56,6 +57,10 @@ def _node_bin() -> str | None:
         private = node_dir(data_dir()) / "node.exe"
         if private.is_file():
             return str(private)
+    # 优先检查本机 WorkBuddy 自带的 node 二进制
+    wb_nodes = glob.glob(os.path.expanduser("~/.workbuddy/binaries/node/versions/*/bin/node"))
+    if wb_nodes and os.path.isfile(wb_nodes[0]):
+        return wb_nodes[0]
     return shutil.which("node") or shutil.which("node.exe")
 
 

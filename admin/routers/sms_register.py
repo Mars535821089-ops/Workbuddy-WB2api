@@ -53,6 +53,7 @@ class AutoRegisterIn(BaseModel):
     max_wait_seconds: int = 60  # 单个号码默认60秒，超时自动换号
     max_retries_per_account: int = 5  # 单个账号最大换号重试次数
     poll_interval: int = 5
+    proxy: Optional[str] = None  # 可选会话级独立代理（仅作用于单次请求，不修改宿主全局网络）
 
 
 @router.get("/config")
@@ -223,7 +224,7 @@ def _register_single_account(
                 "message": f"{attempt_prefix} 成功获取手机号: {phone} ({type_label}" + (f" {phone_data['sp']} {phone_data['phone_gsd']})" if phone_data.get("sp") else ")"),
             })
 
-            # 2. 初始化 WorkBuddy 登录会话
+            # 2. 初始化 WorkBuddy 登录会话（分配独立干净设备指纹与隔离网络环境）
             yield _sse_event("step", {
                 "index": current_index,
                 "total": total_count,
@@ -231,11 +232,11 @@ def _register_single_account(
                 "step": "init_session",
                 "status": "running",
                 "phone": phone,
-                "message": f"{attempt_prefix} 正在初始化 WorkBuddy 登录会话...",
+                "message": f"{attempt_prefix} 正在分配独立干净设备环境与网络特征...",
             })
 
             try:
-                sess = wb_login.start_login()
+                sess = wb_login.start_login(proxy=body.proxy)
             except wb_login.WbLoginError as e:
                 client.release_phone(phone=phone, project_id=project_id, engine=engine)
                 msg = f"初始化会话失败: {e.message}"
@@ -252,6 +253,8 @@ def _register_single_account(
                     continue
                 return {"ok": False, "error": msg, "phone": phone}
 
+            env = getattr(sess, "env", None)
+            env_info = f"{env.platform} · 出口特征 {env.client_ip}" if env else "默认隔离"
             yield _sse_event("step", {
                 "index": current_index,
                 "total": total_count,
@@ -260,7 +263,7 @@ def _register_single_account(
                 "status": "success",
                 "phone": phone,
                 "sid": sess.sid,
-                "message": f"{attempt_prefix} WorkBuddy 登录会话就绪",
+                "message": f"{attempt_prefix} 独立干净环境就绪 ({env_info})",
             })
 
             # 3. 发送验证码短信

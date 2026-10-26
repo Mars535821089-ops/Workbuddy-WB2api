@@ -72,6 +72,8 @@ from typing import Any
 
 import httpx
 
+from admin.device_env import DeviceEnv, create_clean_env
+
 _logger = logging.getLogger("admin.wb_login")
 
 # ---------------------------------------------------------------------------
@@ -283,6 +285,8 @@ class PhoneLoginSession:
     sid: str
     client: httpx.Client
     created: float = field(default_factory=time.time)
+    #: 独立干净环境与设备指纹
+    env: DeviceEnv = field(default_factory=create_clean_env)
     #: 设备授权 state（换取客户端凭证的钥匙）。
     plugin_state: str = ""
     plugin_auth_url: str = ""
@@ -324,15 +328,7 @@ class PhoneLoginSession:
     # -- 内部 HTTP 小工具 --------------------------------------------------
 
     def _headers(self, extra: dict | None = None, referer: str | None = None) -> dict:
-        h = {
-            "User-Agent": WEB_UA,
-            "Accept-Language": "zh-CN,zh;q=0.9",
-            "Accept": "application/json, text/plain, */*",
-            "Origin": HOST,
-            "Referer": referer or (HOST + "/"),
-        }
-        h.update(extra or {})
-        return h
+        return self.env.build_headers(HOST, referer=referer, extra=extra)
 
     def _get(self, url: str, **kw) -> httpx.Response:
         return self.client.get(url, **kw)
@@ -496,9 +492,12 @@ def get_session(sid: str) -> PhoneLoginSession:
     return sess
 
 
-def _new_session() -> PhoneLoginSession:
+def _new_session(env: DeviceEnv | None = None, proxy: str | None = None) -> PhoneLoginSession:
+    clean_env = env or create_clean_env(proxy=proxy)
+    proxies = clean_env.proxy or proxy or None
     client = httpx.Client(
-        headers={"User-Agent": WEB_UA, "Accept-Language": "zh-CN,zh;q=0.9"},
+        headers=clean_env.build_headers(HOST),
+        proxy=proxies,
         follow_redirects=False,
         # 分级超时：连接 5s / 读 10s / 写 10s / 池等待 5s。
         # 池等待也设上限 —— 否则连接池被占满时请求会**无限等**，
@@ -512,7 +511,7 @@ def _new_session() -> PhoneLoginSession:
                             keepalive_expiry=30.0),
     )
     sid = uuid.uuid4().hex
-    return PhoneLoginSession(sid=sid, client=client)
+    return PhoneLoginSession(sid=sid, client=client, env=clean_env)
 
 
 def _register_session(sess: PhoneLoginSession) -> None:
@@ -560,12 +559,14 @@ def _envelope_data(obj: dict, step: str) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def start_login() -> PhoneLoginSession:
-    """第 1-5 步：建会話、拿设备 state、把 Keycloak/OneID 授权链铺到 OneID 首页。
+def start_login(env: DeviceEnv | None = None, proxy: str | None = None) -> PhoneLoginSession:
+    """第 1-5 步：建会话（使用独立干净设备环境与指纹）、拿设备 state、把 Keycloak/OneID 授权链铺到 OneID 首页。
 
     返回的会话已经可以直接发短信，因此这一步对用户是「瞬时」的。
     """
-    sess = _new_session()
+    sess = _new_session(env=env, proxy=proxy)
+    _logger.info("wb_login: 初始化独立干净环境 sid=%s platform=%s client_ip=%s proxy=%s",
+                 sess.sid[:8], sess.env.platform, sess.env.client_ip, bool(sess.env.proxy))
     try:
         # 1) 设备授权 state
         r = sess.client.post(
@@ -1238,14 +1239,14 @@ def build_credential_from_token(token: dict) -> tuple[str, dict]:
     return built, check.meta
 
 
-def start_official_login() -> PhoneLoginSession:
+def start_official_login(env: DeviceEnv | None = None, proxy: str | None = None) -> PhoneLoginSession:
     """只做第 1 步：拿 state + authUrl（供「官方页面接力」用）。
 
     比 `start_login()` 轻得多 —— 不铺 Keycloak/OneID 授权链，
     因为那条链是给「服务端代跑短信登录」用的；官方接力模式下
     用户自己会把这条链走完。
     """
-    sess = _new_session()
+    sess = _new_session(env=env, proxy=proxy)
     try:
         r = sess.client.post(
             f"{HOST}/v2/plugin/auth/state?platform=workbuddy", json={},

@@ -186,9 +186,18 @@ def _looks_like_install(d: Path) -> bool:
 
     只认 `resources/app.asar` 这一个特征：它是 Electron 打包的必然产物，
     比「目录名像 WorkBuddy」可靠得多（用户可以把目录改名成任意名字）。
+    在 macOS 上，.app 包结构为 <App>.app/Contents/Resources/app.asar。
     """
     try:
-        return (d / _ASAR_REL[0] / _ASAR_REL[1]).is_file()
+        # Windows / Linux: <install>/resources/app.asar
+        if (d / _ASAR_REL[0] / _ASAR_REL[1]).is_file():
+            return True
+        # macOS .app bundle: <App>.app/Contents/Resources/app.asar
+        if (d / "Contents" / "Resources" / "app.asar").is_file():
+            return True
+        if (d / "Contents" / "resources" / "app.asar").is_file():
+            return True
+        return False
     except OSError:
         return False
 
@@ -328,16 +337,32 @@ class _WorkBuddyInstall:
             "sources": {},     # 每项值的来源，便于排障
         }
         if inst is not None:
-            asar = inst.joinpath(*_ASAR_REL)
+            # 兼容 macOS .app 内部的 Contents/Resources 结构与常规 resources 结构
+            if (inst / "Contents" / "Resources" / "app.asar").is_file():
+                asar = inst / "Contents" / "Resources" / "app.asar"
+                unpacked = inst / "Contents" / "Resources" / "app.asar.unpacked"
+            elif (inst / "Contents" / "resources" / "app.asar").is_file():
+                asar = inst / "Contents" / "resources" / "app.asar"
+                unpacked = inst / "Contents" / "resources" / "app.asar.unpacked"
+            else:
+                asar = inst.joinpath(*_ASAR_REL)
+                unpacked = inst.joinpath(*_UNPACKED_REL)
             info["asar"] = asar if asar.is_file() else None
-            unpacked = inst.joinpath(*_UNPACKED_REL)
             info["unpacked"] = unpacked if unpacked.is_dir() else None
 
         # --- 桌面端版本 + 风控配置 ---
-        # 优先 install-manifest.json（安装器写的，最贴近「用户装的是哪版」）
-        manifest = self._read_json(
-            (info["install_dir"] / "resources" / "install-manifest.json")
-            if info["install_dir"] else None)
+        manifest_p = None
+        if info["install_dir"]:
+            cand_manifests = [
+                info["install_dir"] / "resources" / "install-manifest.json",
+                info["install_dir"] / "Contents" / "Resources" / "install-manifest.json",
+                info["install_dir"] / "Contents" / "resources" / "install-manifest.json",
+            ]
+            for m in cand_manifests:
+                if m.is_file():
+                    manifest_p = m
+                    break
+        manifest = self._read_json(manifest_p)
         cli_product = self._read_json(
             (info["unpacked"] / "cli" / "product.json")
             if info["unpacked"] else None)
@@ -522,6 +547,20 @@ class _WorkBuddyInstall:
                 continue
             for name in _BASE_NAMES:
                 out.append(Path(base) / name)
+
+        # 2b) macOS 应用程序安装目录（优先适配国内版 WorkBuddy-CN / WorkBuddy）
+        for mac_app_dir in ("/Applications", os.path.expanduser("~/Applications")):
+            for app_name in (
+                "WorkBuddy-CN.app",
+                "WorkBuddy.app",
+                "WorkBuddy CN.app",
+                "CodeBuddy.app",
+                "CodeBuddy-CN.app",
+                "workbuddy.app",
+            ):
+                app_path = Path(mac_app_dir) / app_name
+                out.append(app_path)
+                out.append(app_path / "Contents")
 
         # 3) 各盘根目录
         drives = (os.getenv("WORKBUDDY_DRIVES") or "").strip() or _DEFAULT_DRIVES

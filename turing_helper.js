@@ -36,6 +36,8 @@ const fs = require("node:fs");
 const REL_SDK_PATHS = [
   "resources/app.asar.unpacked/native/turing-sdk",
   "resources/native/turing-sdk",
+  "Contents/Resources/app.asar.unpacked/native/turing-sdk",
+  "Contents/resources/app.asar.unpacked/native/turing-sdk",
 ];
 
 // 兜底默认值：只在读不到安装包时使用，不代表真实版本
@@ -57,10 +59,13 @@ function looksLikeSdk(dir) {
   }
 }
 
-// 目录是否是桌面端安装基目录（以存在 resources/app.asar 为准）
+// 目录是否是桌面端安装基目录（以存在 resources/app.asar 或 macOS Contents/Resources/app.asar 为准）
 function looksLikeInstall(dir) {
   try {
-    return fs.statSync(path.join(dir, "resources", "app.asar")).isFile();
+    if (fs.existsSync(path.join(dir, "resources", "app.asar"))) return true;
+    if (fs.existsSync(path.join(dir, "Contents", "Resources", "app.asar"))) return true;
+    if (fs.existsSync(path.join(dir, "Contents", "resources", "app.asar"))) return true;
+    return false;
   } catch (_) {
     return false;
   }
@@ -127,6 +132,12 @@ function collectCandidateDirs() {
 
   // 2) 常见安装基目录
   const bases = [];
+  // 2a) macOS 常见安装目录
+  for (const appDir of ["/Applications", path.join(process.env.HOME || "", "Applications")]) {
+    for (const name of ["WorkBuddy-CN.app", "WorkBuddy.app", "WorkBuddy CN.app", "CodeBuddy.app"]) {
+      bases.push(path.join(appDir, name));
+    }
+  }
   for (const ev of ["LOCALAPPDATA", "APPDATA", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "USERPROFILE", "HOME"]) {
     const v = process.env[ev];
     if (v) {
