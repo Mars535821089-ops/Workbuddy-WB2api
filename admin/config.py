@@ -31,10 +31,14 @@ class Settings:
     RETRY_WINDOW_SECONDS = float(os.getenv("ADMIN_POOL_RETRY_WINDOW", "90"))
     MODEL_DAILY_COOLDOWN_SECONDS = int(os.getenv("ADMIN_POOL_MODEL_DAILY_COOLDOWN", "86400"))
     # 数据库 / 缓存
-    DATABASE_URL = os.getenv(
+    _raw_db_url = os.getenv(
         "ADMIN_DATABASE_URL",
         "mysql+pymysql://root:root@127.0.0.1:3306/workbuddy_admin?charset=utf8mb4",
     )
+    if _raw_db_url.startswith("sqlite:///./"):
+        DATABASE_URL = f"sqlite:///{os.path.abspath(os.path.join(_ROOT, _raw_db_url[len('sqlite:///./'):]))}"
+    else:
+        DATABASE_URL = _raw_db_url
     REDIS_URL = os.getenv("ADMIN_REDIS_URL", "redis://127.0.0.1:6379/0")
 
     # 后端（CodeBuddy / WorkBuddy）

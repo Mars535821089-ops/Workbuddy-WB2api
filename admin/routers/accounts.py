@@ -217,10 +217,14 @@ def export_accounts(
 
 
 def _client_auth_dir() -> str:
-    d = settings.CLIENT_AUTH_DIR or os.path.expandvars(
-        r"%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth"
-    )
-    return os.path.expandvars(d)
+    env_dir = os.getenv("ADMIN_CLIENT_AUTH_DIR")
+    if env_dir:
+        return os.path.expandvars(os.path.expanduser(env_dir))
+    mac_path = os.path.expanduser("~/Library/Application Support/CodeBuddyExtension/Data/Public/auth")
+    if os.path.isdir(mac_path):
+        return mac_path
+    d = os.path.expandvars(r"%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth")
+    return d
 
 
 def _apply_meta(acc: Account, auth_json: str, profile: dict | None = None,

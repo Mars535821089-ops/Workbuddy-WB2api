@@ -155,6 +155,8 @@ if os.getenv("WORKBUDDY_ANDROID") != "1":
     app.include_router(app_source.router)
 app.include_router(login_router.router)
 app.include_router(releases.router)
+from admin.routers import sms_register
+app.include_router(sms_register.router)
 # 自助上传页（无需后台登录态）：复刻 WorkBuddy 手机号登录页，
 # 让「发给朋友」这一诉求成立 —— 对方不需要知道后台口令。
 app.include_router(login_router.public_router)
@@ -396,7 +398,10 @@ def index_redirect():
 @app.get("/admin")
 @app.get("/admin/")
 def admin_index():
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(
+        STATIC_DIR / "index.html",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"}
+    )
 
 
 @app.get("/join")

@@ -378,7 +378,7 @@ def _send_guarded(body, ip):
             except wb_login.WbLoginError as error:
                 if error.reason == "need_captcha" or any(word in error.message.lower() for word in ("频繁", "限制", "rate", "频率")):
                     with _sms_lock:
-                        _sms_exit_blocked_until = time.time() + 300
+                        _sms_exit_blocked_until = time.time() + 15
                 raise
     except wb_login.WbLoginError as error:
         response = _fail(error, 400 if error.step in ("mobile", "session") else 502)

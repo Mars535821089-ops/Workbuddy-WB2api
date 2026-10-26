@@ -811,6 +811,7 @@
           <p>登录新账号，或从本机与备份中恢复已有账号。</p>
         </div>
         <div class="intake-actions">
+          <button type="button" onclick="openAutoRegister()" class="console-btn primary" style="background: linear-gradient(135deg, #059669 0%, #10b981 100%); border-color: #059669;"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>一键注册账号</button>
           <button type="button" onclick="openPhoneLogin()" class="console-btn primary"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></svg>手机号登录</button>
           <button type="button" onclick="openUpload()" class="console-btn "><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m-4 4 4-4 4 4M4 16v4h16v-4"/></svg>导入账号</button>
           <span class="intake-divider" aria-hidden="true"></span>
@@ -3737,11 +3738,55 @@ async function resetCreditOrder() {
  * 应用户手机号 + 验证码，由**服务端**完成整条 auth 授权并把凭证直接入库。
  * 全程不需要安装 WorkBuddy 客户端，手机浏览器也能走完。
  */
-let _plSid = "", _plTimer = null, _plCountdown = 0, _plBusy = false, _plRetryUntil = 0, _plRestoring = false;
+let _plSid = "", _plTimer = null, _plCountdown = 0, _plBusy = false, _plRetryUntil = 0, _plRestoring = false, _plOffTimer = null;
 function plSave() {
   WBPhone.save('wb_admin_phone', {sid:_plSid, mobile:$('#plMobile')?.value || '',
     country:$('#plCountry')?.value || '86', retryUntil:_plRetryUntil,
     codeSent:!$('#plStep2')?.classList.contains('hidden')});
+}
+
+async function plOfficialStart() {
+  if (_plOffTimer) clearInterval(_plOffTimer);
+  const win = window.open('about:blank', '_blank');
+  try {
+    const r = await api('/api/join/official/start', { method: 'POST', body: '{}', headers: {'Content-Type': 'application/json'} });
+    const { ok, data } = await safeJson(r);
+    if (!ok || !data.auth_url) throw new Error((data.detail && (data.detail.message || data.detail)) || '启动官方授权失败');
+    if (win) { win.location.href = data.auth_url; win.focus(); }
+
+    $('#plStep1')?.classList.add('hidden');
+    $('#plStep2')?.classList.add('hidden');
+    $('#plStep3')?.classList.remove('hidden');
+    $('#plResultIcon').innerHTML = '<i class="fa-solid fa-spinner fa-spin text-emerald-600 text-3xl"></i>';
+    $('#plResultMsg').innerHTML = `
+      <div class="font-bold text-slate-800 dark:text-slate-100 text-sm mb-1">官方安全授权登录已打开</div>
+      <div class="text-xs text-slate-500 mb-2">请在新窗口中输入手机号并完成验证码登录（可正常滑过腾讯滑块）。</div>
+      <div class="text-xs text-emerald-600 font-medium animate-pulse mb-3">系统正在实时监听授权结果，登录完成后全自动秒入库...</div>
+      <div class="text-[11px] text-slate-400">如窗口被拦截，请 <a href="${data.auth_url}" target="_blank" class="text-sky-600 underline font-medium">点击此处手动打开</a></div>
+    `;
+
+    _plOffTimer = setInterval(async () => {
+      try {
+        const pr = await api('/api/join/official/poll', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ sid: data.sid })
+        });
+        const pj = await safeJson(pr);
+        if (pj.ok && pj.data && pj.data.done) {
+          clearInterval(_plOffTimer);
+          _plOffTimer = null;
+          $('#plResultIcon').innerHTML = '<i class="fa-solid fa-circle-check text-emerald-500 text-3xl"></i>';
+          $('#plResultMsg').innerHTML = `<div class="font-bold text-emerald-600 mb-1">登录成功！</div><div class="text-xs text-slate-500">新账号已全自动校验并成功加入账号池！</div>`;
+          toast('账号登录成功并已自动入库！', 'ok');
+          loadAccounts();
+          setTimeout(() => closeModal(), 2000);
+        }
+      } catch (err) {}
+    }, 2000);
+  } catch (e) {
+    if (win) win.close();
+    toast('启动官方授权失败: ' + (e.message || e), 'err');
+  }
 }
 
 let _plAccountId = null;
@@ -3771,6 +3816,12 @@ async function openPhoneLogin(accountId = null){
       <div class="flex justify-end gap-2 mt-4">
         <button onclick="closeModal()" class="px-3 py-1.5 rounded-lg border text-sm">取消</button>
         <button id="plSendBtn" onclick="plSend()" class="px-3 py-1.5 rounded-lg btn-primary">获取验证码</button>
+      </div>
+      <div class="mt-4 pt-3 border-t text-center">
+        <button type="button" onclick="plOfficialStart()" class="w-full py-2 px-3 border border-emerald-500/30 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 rounded-lg text-xs font-semibold hover:bg-emerald-100 dark:hover:bg-emerald-900/40 flex items-center justify-center gap-1.5 transition">
+          <i class="fa-solid fa-shield-halved text-emerald-600"></i>
+          <span>收不到验证码？点击使用【官方安全通道登录】(免客户端·自动过滑块·秒入库)</span>
+        </button>
       </div>
     </div>
 
@@ -3894,6 +3945,11 @@ async function plSend(){
       const msg = (d && (d.message || d)) || "发送失败";
       // 会话可能已过期（超时/已消费）→ 清掉，下次点击自动重开
       if(d && d.step === "session") _plSid = "";
+      if((d && d.reason === "need_captcha") || (typeof msg === 'string' && (msg.includes("安全验证") || msg.includes("need_captcha")))){
+        toast("触发腾讯滑块风控，正在自动为您打开官方安全验证通道...", "info");
+        plOfficialStart();
+        return;
+      }
       toast(String(msg), "err");
       plStartCountdown(Number(r.headers.get('Retry-After')) || 60);
       return;
@@ -3945,6 +4001,450 @@ async function plVerify(){
   } finally {
     _plBusy = false;
     if(btn){ btn.disabled = false; btn.textContent = '登录并上传'; }
+  }
+}
+
+/* ==================== 一键接码注册账号 ==================== */
+let _arController = null;
+let _arRunning = false;
+
+function openAutoRegister() {
+  const savedToken = localStorage.getItem('ar_token') || '7755950de71f81b06a81c8c48b63bada';
+  const savedEngine = localStorage.getItem('ar_engine') || 'a';
+  const savedProjectId = localStorage.getItem('ar_project_id') || '139372';
+  const savedProjectName = localStorage.getItem('ar_project_name') || 'workbuddy/codebuddy/腾讯科技二次';
+  const savedCount = parseInt(localStorage.getItem('ar_count') || '1', 10);
+  const savedCardType = localStorage.getItem('ar_card_type') || 'all';
+
+  openModal(`
+    <div class="space-y-4">
+      <div class="border-b pb-3 dark:border-slate-800">
+        <h3 class="font-bold text-base text-slate-800 dark:text-slate-100 flex items-center gap-2">
+          <span class="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+            <i class="fa-solid fa-bolt text-sm"></i>
+          </span>
+          一键接码注册账号
+        </h3>
+        <p class="text-xs text-slate-500 mt-1">
+          对接疾驰短信平台 API 自动获取手机号、发码、读码并完成 WorkBuddy 登录与账号入库。支持任意数量连续注册与自动换号重试。
+        </p>
+      </div>
+
+      <!-- 参数配置区 -->
+      <div id="arConfigForm" class="space-y-3">
+        <div>
+          <label class="text-xs font-semibold text-slate-700 dark:text-slate-200 flex items-center justify-between">
+            <span class="flex items-center gap-1.5"><i class="fa-solid fa-arrow-up-1-9 text-emerald-600"></i> 注册数量</span>
+            <span class="text-[11px] text-slate-400 font-normal">写 1 就注册 1 个，写 2 连续注册 2 个</span>
+          </label>
+          <div class="flex items-center gap-2 mt-1.5">
+            <input id="arCount" type="number" min="1" max="50" value="${savedCount || 1}"
+                   class="border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-3 py-2 text-base font-bold text-emerald-600 w-28 text-center" />
+            <div class="flex items-center gap-1">
+              <button type="button" onclick="$('#arCount').value=1" class="px-2.5 py-1.5 border border-slate-200 dark:border-slate-700 rounded-md text-xs hover:bg-slate-50 dark:hover:bg-slate-800 font-medium">1个</button>
+              <button type="button" onclick="$('#arCount').value=2" class="px-2.5 py-1.5 border border-slate-200 dark:border-slate-700 rounded-md text-xs hover:bg-slate-50 dark:hover:bg-slate-800 font-medium">2个</button>
+              <button type="button" onclick="$('#arCount').value=5" class="px-2.5 py-1.5 border border-slate-200 dark:border-slate-700 rounded-md text-xs hover:bg-slate-50 dark:hover:bg-slate-800 font-medium">5个</button>
+              <button type="button" onclick="$('#arCount').value=10" class="px-2.5 py-1.5 border border-slate-200 dark:border-slate-700 rounded-md text-xs hover:bg-slate-50 dark:hover:bg-slate-800 font-medium">10个</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 预设项目通道选择 -->
+        <div>
+          <label class="text-xs font-semibold text-slate-700 dark:text-slate-200">通道与项目</label>
+          <select id="arPresetSelect" onchange="arOnPresetChange()" class="w-full border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-2.5 py-2 text-xs mt-1 font-medium text-slate-800 dark:text-slate-100">
+            <option value="a_139372" ${savedProjectId === '139372' ? 'selected' : ''}>⭐【推荐首选】引擎A · 139372 - WorkBuddy专属卡池 (实测秒接码)</option>
+            <option value="b_77560" ${savedProjectId === '77560' ? 'selected' : ''}>【备用通道1】引擎B · 77560 - 深圳市腾讯计算机系统</option>
+            <option value="a_142759" ${savedProjectId === '142759' ? 'selected' : ''}>【备用通道2】引擎A · 142759 - 腾讯科技/wegame</option>
+            <option value="b_71139" ${savedProjectId === '71139' ? 'selected' : ''}>【备用通道3】引擎B · 71139 - 腾讯云-注册</option>
+            <option value="custom">✏️ 自定义项目与引擎...</option>
+          </select>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3 pt-0.5">
+          <div>
+            <label class="text-xs font-semibold text-slate-700 dark:text-slate-200">卡号类型筛选</label>
+            <select id="arCardType" class="w-full border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-2.5 py-1.5 text-xs mt-1 font-medium">
+              <option value="physical" ${savedCardType === 'physical' ? 'selected' : ''}>实体卡优先 (自动避开170/171防风控)</option>
+              <option value="all" ${savedCardType === 'all' ? 'selected' : ''}>全部 (实体卡 + 虚拟卡)</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs font-semibold text-slate-700 dark:text-slate-200">超时换号 (秒)</label>
+            <input id="arMaxWait" type="number" min="20" max="120" value="35"
+                   class="w-full border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg px-2.5 py-1.5 text-xs mt-1 font-medium" />
+          </div>
+        </div>
+
+        <!-- 自定义通道折叠区 -->
+        <div id="arCustomArea" class="hidden grid grid-cols-2 gap-3 p-2 bg-slate-50 dark:bg-slate-800/40 rounded-lg border border-slate-200 dark:border-slate-700">
+          <div>
+            <label class="text-[11px] text-slate-500">SIM 渠道</label>
+            <select id="arEngine" class="w-full border rounded px-2 py-1 text-xs mt-0.5">
+              <option value="b" ${savedEngine === 'b' ? 'selected' : ''}>引擎B (国内卡)</option>
+              <option value="a" ${savedEngine === 'a' ? 'selected' : ''}>引擎A (国内卡)</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-500">项目 ID</label>
+            <input id="arProjectId" type="text" value="${savedProjectId}"
+                   class="w-full border rounded px-2 py-1 text-xs font-mono mt-0.5" />
+          </div>
+        </div>
+
+        <!-- 平台 Token 高级设置 -->
+        <details class="text-xs bg-slate-50 dark:bg-slate-800/40 p-2.5 rounded-lg border border-slate-200 dark:border-slate-700">
+          <summary class="cursor-pointer text-slate-600 dark:text-slate-400 hover:text-slate-800 font-medium select-none flex items-center justify-between">
+            <span><i class="fa-solid fa-key mr-1 text-slate-400"></i> 接码 API Token 与重试机制</span>
+            <span class="text-[10px] text-slate-400">展开</span>
+          </summary>
+          <div class="mt-2.5 space-y-2.5 pt-2 border-t border-slate-200 dark:border-slate-700/60">
+            <div>
+              <label class="text-[11px] text-slate-500 font-medium">疾驰短信 API Token</label>
+              <input id="arToken" type="text" value="${savedToken}"
+                     class="w-full border border-slate-300 dark:border-slate-700 dark:bg-slate-900 rounded px-2 py-1 text-xs font-mono mt-0.5" />
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="text-[11px] text-slate-500 font-medium">单号最大换号重试</label>
+                <input id="arRetries" type="number" min="1" max="5" value="3"
+                       class="w-full border border-slate-300 dark:border-slate-700 dark:bg-slate-900 rounded px-2 py-1 text-xs mt-0.5" />
+              </div>
+              <div>
+                <label class="text-[11px] text-slate-500 font-medium">连续账号间隔 (秒)</label>
+                <input id="arInterval" type="number" min="1" max="30" value="3"
+                       class="w-full border border-slate-300 dark:border-slate-700 dark:bg-slate-900 rounded px-2 py-1 text-xs mt-0.5" />
+              </div>
+            </div>
+            <input id="arProjectName" type="hidden" value="${savedProjectName}" />
+          </div>
+        </details>
+      </div>
+
+      <!-- 实时执行与进度指示区 -->
+      <div id="arStatusArea" class="hidden space-y-2">
+        <div class="p-3 bg-emerald-50 dark:bg-emerald-950/30 rounded-lg border border-emerald-200 dark:border-emerald-800/60 flex items-center justify-between">
+          <div class="flex items-center gap-2.5 min-w-0">
+            <span id="arSpinner" class="inline-flex shrink-0 animate-spin text-emerald-600 dark:text-emerald-400">
+              <i class="fa-solid fa-circle-notch text-sm"></i>
+            </span>
+            <div class="min-w-0">
+              <div id="arProgressText" class="text-xs font-semibold text-emerald-900 dark:text-emerald-100 truncate">正在处理...</div>
+              <div id="arSubText" class="text-[11px] text-emerald-700 dark:text-emerald-300/80 truncate">准备就绪</div>
+            </div>
+          </div>
+          <div id="arProgressBadge" class="text-xs font-mono font-bold bg-emerald-600 text-white px-2 py-0.5 rounded-full shrink-0">
+            0 / 0
+          </div>
+        </div>
+
+        <!-- 实时执行步骤日志窗 -->
+        <div id="arLogBox" class="bg-slate-950 text-slate-200 p-2.5 rounded-lg text-[11px] font-mono h-44 overflow-y-auto space-y-1 border border-slate-800 shadow-inner select-text"></div>
+
+        <!-- 成功账号结果清单 -->
+        <div id="arSuccessArea" class="hidden bg-slate-50 dark:bg-slate-800/40 p-2.5 rounded-lg border border-slate-200 dark:border-slate-700">
+          <div class="text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center justify-between mb-1.5">
+            <span><i class="fa-solid fa-circle-check text-emerald-500 mr-1"></i> 已成功入库账号清单</span>
+            <span id="arSuccessCountTag" class="text-[11px] font-normal text-emerald-600">0 个</span>
+          </div>
+          <div id="arSuccessItems" class="space-y-1 max-h-28 overflow-y-auto text-xs"></div>
+        </div>
+      </div>
+
+      <!-- 底部控制按钮 -->
+      <div class="flex items-center justify-between pt-3 border-t dark:border-slate-800">
+        <div class="text-[11px] text-slate-400">
+          <button type="button" onclick="arCloseModal(); plOfficialStart();" class="text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1">
+            <i class="fa-solid fa-shield-halved"></i> <span>收不到验证码？切换官方安全通道登录</span>
+          </button>
+        </div>
+        <div class="flex items-center gap-2">
+          <button type="button" id="arCloseBtn" onclick="arCloseModal()" class="px-3.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-medium hover:bg-slate-50 dark:hover:bg-slate-800">
+            取消
+          </button>
+          <button type="button" id="arStopBtn" onclick="arStopRegistration()" class="px-3.5 py-1.5 rounded-lg border border-rose-300 text-rose-600 hover:bg-rose-50 text-xs font-medium hidden">
+            <i class="fa-solid fa-stop mr-1"></i> 停止
+          </button>
+          <button type="button" id="arStartBtn" onclick="arStartRegistration()" class="px-4 py-1.5 rounded-lg text-white font-medium text-xs flex items-center gap-1.5 shadow" style="background: linear-gradient(135deg, #059669 0%, #10b981 100%);">
+            <i class="fa-solid fa-bolt text-xs"></i> <span>开始一键注册</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  `, "max-w-lg");
+
+  arOnPresetChange();
+}
+
+function arOnPresetChange() {
+  const val = $('#arPresetSelect')?.value || 'b_77560';
+  const customArea = $('#arCustomArea');
+  if (val === 'custom') {
+    customArea?.classList.remove('hidden');
+  } else {
+    customArea?.classList.add('hidden');
+    if (val === 'b_77560') {
+      $('#arEngine').value = 'b';
+      $('#arProjectId').value = '77560';
+      $('#arProjectName').value = '深圳市腾讯计算机系统';
+    } else if (val === 'b_71139') {
+      $('#arEngine').value = 'b';
+      $('#arProjectId').value = '71139';
+      $('#arProjectName').value = '腾讯云-注册';
+    } else if (val === 'a_139372') {
+      $('#arEngine').value = 'a';
+      $('#arProjectId').value = '139372';
+      $('#arProjectName').value = 'workbuddy/codebuddy/腾讯科技二次';
+    } else if (val === 'a_142759') {
+      $('#arEngine').value = 'a';
+      $('#arProjectId').value = '142759';
+      $('#arProjectName').value = '腾讯科技/wegame';
+    }
+  }
+}
+
+function arOnEngineChange() {
+  const eng = $('#arEngine').value;
+  if (eng === 'b') {
+    $('#arProjectId').value = '77560';
+    $('#arProjectName').value = '深圳市腾讯计算机系统';
+  } else {
+    $('#arProjectId').value = '139372';
+    $('#arProjectName').value = 'workbuddy/codebuddy/腾讯科技二次';
+  }
+}
+
+function arAppendLog(text, level = 'info') {
+  const box = $('#arLogBox');
+  if (!box) return;
+  const timeStr = new Date().toTimeString().split(' ')[0];
+  const item = document.createElement('div');
+  item.className = 'flex items-start gap-1.5';
+  let color = 'text-slate-300';
+  let icon = '•';
+  if (level === 'success') { color = 'text-emerald-400 font-semibold'; icon = '✓'; }
+  else if (level === 'error') { color = 'text-rose-400 font-semibold'; icon = '✕'; }
+  else if (level === 'warn') { color = 'text-amber-400'; icon = '!'; }
+  else if (level === 'wait') { color = 'text-sky-300'; icon = '⟳'; }
+  
+  item.innerHTML = `<span class="text-slate-500 shrink-0 select-none">[${timeStr}]</span> <span class="${color}">${esc(icon)} ${esc(text)}</span>`;
+  box.appendChild(item);
+  box.scrollTop = box.scrollHeight;
+}
+
+function arStopRegistration() {
+  if (_arController) {
+    _arController.abort();
+    _arController = null;
+  }
+  _arRunning = false;
+  arAppendLog('用户已主动中止任务', 'warn');
+  const btn = $('#arStartBtn');
+  if (btn) {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-bolt text-xs"></i> <span>重新开始</span>';
+  }
+  $('#arStopBtn')?.classList.add('hidden');
+  $('#arCloseBtn')?.classList.remove('hidden');
+  $('#arSpinner')?.classList.add('hidden');
+  $('#arProgressText').textContent = '任务已停止';
+  loadAccounts();
+}
+
+function arCloseModal() {
+  if (_arRunning) {
+    if (!confirm('当前注册任务正在运行中，确认中止并关闭吗？')) return;
+    arStopRegistration();
+  }
+  closeModal();
+}
+
+async function arStartRegistration() {
+  if (_arRunning) return;
+  const count = Math.max(1, parseInt($('#arCount')?.value || '1', 10));
+  const engine = $('#arEngine')?.value || 'b';
+  const projectId = ($('#arProjectId')?.value || '').trim() || '77560';
+  const projectName = ($('#arProjectName')?.value || '').trim() || '深圳市腾讯计算机系统';
+  const token = ($('#arToken')?.value || '').trim() || '7755950de71f81b06a81c8c48b63bada';
+  const cardType = $('#arCardType')?.value || 'physical';
+  const maxWait = parseInt($('#arMaxWait')?.value || '35', 10);
+  const retries = parseInt($('#arRetries')?.value || '3', 10);
+  const interval = parseInt($('#arInterval')?.value || '3', 10);
+
+  // 本地记忆配置
+  localStorage.setItem('ar_count', String(count));
+  localStorage.setItem('ar_engine', engine);
+  localStorage.setItem('ar_project_id', projectId);
+  localStorage.setItem('ar_project_name', projectName);
+  localStorage.setItem('ar_card_type', cardType);
+  localStorage.setItem('ar_token', token);
+
+  _arRunning = true;
+  _arController = new AbortController();
+
+  // 更新 UI 状态
+  $('#arStatusArea')?.classList.remove('hidden');
+  $('#arSuccessArea')?.classList.add('hidden');
+  $('#arSuccessItems').innerHTML = '';
+  $('#arLogBox').innerHTML = '';
+  $('#arStartBtn').disabled = true;
+  $('#arStartBtn').classList.add('opacity-50');
+  $('#arStopBtn')?.classList.remove('hidden');
+  $('#arCloseBtn')?.classList.add('hidden');
+  $('#arSpinner')?.classList.remove('hidden');
+  $('#arProgressBadge').textContent = `0 / ${count}`;
+  $('#arProgressText').textContent = `正在启动批量注册 (共 ${count} 个)...`;
+  $('#arSubText').textContent = '连接后端服务中...';
+
+  arAppendLog(`启动一键接码注册：目标 ${count} 个账号，渠道: 引擎${engine.toUpperCase()}，项目: ${projectId} (${projectName})`);
+
+  const successfulAccounts = [];
+
+  try {
+    const response = await fetch('/api/sms-register/run', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Admin-Token': TOKEN || localStorage.getItem(TOKEN_KEY) || ''
+      },
+      body: JSON.stringify({
+        token,
+        engine,
+        project_id: projectId,
+        project_name: projectName,
+        count,
+        card_type: cardType,
+        max_retries_per_account: retries,
+        interval_between: interval,
+        max_wait_seconds: maxWait,
+        poll_interval: 3
+      }),
+      signal: _arController.signal
+    });
+
+    if (!response.ok) {
+      const errJson = await response.json().catch(() => ({}));
+      throw new Error(errJson.detail || `请求失败 (${response.status})`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop(); // 保留尚未结束的块
+
+      for (const block of lines) {
+        if (!block.trim()) continue;
+        let eventName = 'message';
+        let dataStr = '';
+        const rawLines = block.split('\n');
+        for (const line of rawLines) {
+          if (line.startsWith('event: ')) {
+            eventName = line.substring(7).trim();
+          } else if (line.startsWith('data: ')) {
+            dataStr += line.substring(6);
+          }
+        }
+
+        if (!dataStr) continue;
+        let dataObj;
+        try {
+          dataObj = JSON.parse(dataStr);
+        } catch (e) {
+          continue;
+        }
+
+        // 处理各类事件
+        if (eventName === 'batch_start') {
+          $('#arProgressBadge').textContent = `0 / ${dataObj.total}`;
+          $('#arProgressText').textContent = `开始批量注册，目标 ${dataObj.total} 个账号`;
+          arAppendLog(dataObj.message);
+        } else if (eventName === 'account_start') {
+          $('#arProgressBadge').textContent = `${dataObj.index} / ${dataObj.total}`;
+          $('#arProgressText').textContent = `正在注册第 ${dataObj.index}/${dataObj.total} 个账号`;
+          $('#arSubText').textContent = '取号中...';
+          arAppendLog(dataObj.message);
+        } else if (eventName === 'step') {
+          if (dataObj.status === 'running') {
+            $('#arSubText').textContent = dataObj.message;
+            arAppendLog(dataObj.message);
+          } else if (dataObj.status === 'waiting') {
+            $('#arSubText').textContent = dataObj.message;
+            if (dataObj.elapsed % 6 === 0) {
+              arAppendLog(dataObj.message, 'wait');
+            }
+          } else if (dataObj.status === 'success') {
+            $('#arSubText').textContent = dataObj.message;
+            arAppendLog(dataObj.message, 'success');
+          } else if (dataObj.status === 'error') {
+            $('#arSubText').textContent = dataObj.message;
+            arAppendLog(dataObj.message, 'error');
+          }
+        } else if (eventName === 'account_done') {
+          successfulAccounts.push(dataObj);
+          arAppendLog(`✓ [${dataObj.index}/${dataObj.total}] 成功入库: ${dataObj.phone} (${(dataObj.account && dataObj.account.name) || '-'})`, 'success');
+          // 更新结果展示卡片
+          $('#arSuccessArea')?.classList.remove('hidden');
+          $('#arSuccessCountTag').textContent = `${successfulAccounts.length} 个`;
+          const item = document.createElement('div');
+          item.className = 'flex items-center justify-between p-1.5 bg-white dark:bg-slate-900 rounded border border-emerald-100 dark:border-emerald-900/60 text-xs';
+          item.innerHTML = `
+            <div class="flex items-center gap-1.5 font-mono">
+              <i class="fa-solid fa-mobile-screen text-emerald-500"></i>
+              <span class="font-bold text-slate-800 dark:text-slate-100">${esc(dataObj.phone)}</span>
+              <span class="text-slate-400">·</span>
+              <span class="text-slate-600 dark:text-slate-300 font-sans">${esc((dataObj.account && dataObj.account.name) || '未命名')}</span>
+            </div>
+            <div class="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold font-mono">
+              余额: ${(dataObj.account && dataObj.account.balance_remain) ?? '-'}
+            </div>
+          `;
+          $('#arSuccessItems')?.appendChild(item);
+          loadAccounts();
+        } else if (eventName === 'account_fail') {
+          arAppendLog(`✕ [${dataObj.index}/${dataObj.total}] ${dataObj.message}`, 'error');
+        } else if (eventName === 'batch_wait') {
+          $('#arSubText').textContent = dataObj.message;
+          arAppendLog(dataObj.message);
+        } else if (eventName === 'batch_done') {
+          arAppendLog(`🎉 ${dataObj.message}`, 'success');
+          $('#arProgressText').textContent = '批量注册已全部完成！';
+          $('#arSubText').textContent = `成功: ${dataObj.success_count} / 失败: ${dataObj.failed_count}`;
+          $('#arSpinner')?.classList.add('hidden');
+          toast(dataObj.message, dataObj.success_count > 0 ? 'ok' : 'err');
+          loadAccounts();
+        } else if (eventName === 'error') {
+          arAppendLog(`✕ 错误: ${dataObj.message}`, 'error');
+          toast(dataObj.message, 'err');
+        }
+      }
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      arAppendLog('任务已被手动停止', 'warn');
+    } else {
+      arAppendLog(`请求异常: ${err.message}`, 'error');
+      toast(err.message, 'err');
+    }
+  } finally {
+    _arRunning = false;
+    _arController = null;
+    $('#arSpinner')?.classList.add('hidden');
+    $('#arStopBtn')?.classList.add('hidden');
+    $('#arCloseBtn')?.classList.remove('hidden');
+    const startBtn = $('#arStartBtn');
+    if (startBtn) {
+      startBtn.disabled = false;
+      startBtn.classList.remove('opacity-50');
+      startBtn.innerHTML = '<i class="fa-solid fa-rotate-right text-xs"></i> <span>继续注册</span>';
+    }
+    loadAccounts();
   }
 }
 
