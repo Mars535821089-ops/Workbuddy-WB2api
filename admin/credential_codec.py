@@ -48,9 +48,10 @@ def _installed_key(executable: str, mtime: int, size: int) -> tuple[str, bytes]:
     env = dict(os.environ, ELECTRON_RUN_AS_NODE='1')
     env.pop('NODE_OPTIONS', None)
     try:
-        result = subprocess.run([executable, '-e', _KEY_SCRIPT], env=env,
-                                capture_output=True, timeout=10,
-                                creationflags=subprocess.CREATE_NO_WINDOW)
+        run_kwargs = dict(env=env, capture_output=True, timeout=10)
+        if os.name == 'nt':
+            run_kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+        result = subprocess.run([executable, '-e', _KEY_SCRIPT], **run_kwargs)
         if result.returncode or len(result.stdout) > 4096:
             raise ValueError()
         value = json.loads(result.stdout)
@@ -78,15 +79,47 @@ def _local_key() -> tuple[str, bytes]:
             return key_id, key
         except Exception:
             raise CredentialDecodeError('凭证加密运行配置无效，请管理员重新配置官方客户端加密能力') from None
-    if os.name != 'nt' or os.getenv('WORKBUDDY_ANDROID') == '1':
+    # macOS 与 Windows 都尝试从 Electron 二进制提取密钥
+    if os.getenv('WORKBUDDY_ANDROID') == '1':
         raise CredentialDecodeError('未配置官方客户端加密能力，请管理员配置 WORKBUDDY_CREDENTIAL_KEY_FILE；也可使用明文备份或手机号授权登录')
     from wb_install import WB
     install = WB.install_dir()
-    executable = Path(install) / 'WorkBuddy.exe' if install else None
+    executable = None
+    if install:
+        install_path = Path(install)
+        if os.name == 'nt':
+            executable = install_path / 'WorkBuddy.exe'
+        else:
+            # macOS: .app/Contents/MacOS/Electron
+            candidate = install_path / 'Contents' / 'MacOS' / 'Electron'
+            if candidate.is_file():
+                executable = candidate
+            else:
+                # 直接试 WorkBuddy 可执行文件
+                for name in ('WorkBuddy', 'WorkBuddy-CN', 'Electron'):
+                    candidate = install_path / 'Contents' / 'MacOS' / name
+                    if candidate.is_file():
+                        executable = candidate
+                        break
     if executable is None or not executable.is_file():
         raise CredentialDecodeError('这是新版客户端加密凭证，未找到本机 WorkBuddy；请配置客户端安装目录或使用手机号授权登录')
     stat = executable.stat()
-    return _installed_key(str(executable), stat.st_mtime_ns, stat.st_size)
+    key_id, key = _installed_key(str(executable), stat.st_mtime_ns, stat.st_size)
+    # 自动缓存到本地文件，下次直接读取无需启动 Electron
+    _save_key_cache(key_file, key_id, key)
+    return key_id, key
+
+
+def _save_key_cache(key_file: Path, key_id: str, key: bytes) -> None:
+    """自动将提取的密钥缓存到本地 .workbuddy/credential-key.json"""
+    try:
+        key_file.parent.mkdir(parents=True, exist_ok=True)
+        key_file.write_text(json.dumps({
+            'keyId': key_id,
+            'key': base64.b64encode(key).decode('ascii'),
+        }), encoding='utf-8')
+    except Exception:
+        pass  # 缓存失败不影响功能
 
 
 def _aad(key_id: str) -> bytes:

@@ -163,7 +163,15 @@ def _verify_and_store(sess, code: str, db: Session, account_id: Optional[int] = 
         result = wb_login.verify_sms(sess, code)
     except wb_login.WbLoginError as e:
         raise _fail(e, 502)
-    return _store_verified_credential(result["credential"], result["meta"] or {}, db, account_id=account_id)
+    meta = dict(result.get("meta") or {})
+    # 提取会话中的完整手机号（不脱敏），确保导入时保留完整号码
+    if getattr(sess, "mobile", None):
+        raw_m = sess.mobile.strip()
+        cc = getattr(sess, "country_code", "86") or "86"
+        full_phone = f"+{cc} {raw_m}" if cc != "86" else raw_m
+        meta["phone"] = full_phone
+        meta["full_phone"] = full_phone
+    return _store_verified_credential(result["credential"], meta, db, account_id=account_id)
 
 
 def _store_verified_credential(credential: str, meta: dict, db: Session, account_id: Optional[int] = None) -> dict:
@@ -197,10 +205,12 @@ def _store_verified_credential(credential: str, meta: dict, db: Session, account
     balance = probe.balance or {}
     if profile.get("uid"):
         meta["uid"] = str(profile["uid"])
-    for src, dst in (("nickname", "nickname"), ("phoneNumber", "phone"),
-                     ("enterpriseId", "enterprise_id")):
+    for src, dst in (("nickname", "nickname"), ("enterpriseId", "enterprise_id")):
         if profile.get(src):
             meta[dst] = str(profile[src])
+    if profile.get("phoneNumber"):
+        if not meta.get("phone") or "****" in str(meta.get("phone")):
+            meta["phone"] = str(profile["phoneNumber"])
 
     uid = meta.get("uid") or wb_login.credential_uid(credential)
 
@@ -279,13 +289,15 @@ def _store_locked(credential: str, meta: dict, balance: dict, uid: str,
         existing.uid = uid or existing.uid
         existing.enterprise_id = meta.get("enterprise_id") or ""
         existing.domain = meta.get("domain") or ""
-        # 昵称缺失时凭证里常是字面量 "null"（本机真实凭证即如此），
-        # 统一用 _clean_nick 归一，避免把 "null" 当昵称写进号池。
-        nick = _clean_nick(meta.get("nickname"))
-        if nick:
-            existing.name = nick
-        elif not existing.name:
-            existing.name = uid or "未命名"
+        full_mobile = meta.get("full_phone") or (meta.get("phone") if meta.get("phone") and "****" not in str(meta.get("phone")) else "")
+        if full_mobile:
+            existing.name = full_mobile
+        else:
+            nick = _clean_nick(meta.get("nickname"))
+            if nick and ("****" not in nick or not existing.name):
+                existing.name = nick
+            elif not existing.name:
+                existing.name = uid or "未命名"
         # 重新登录成功 = 人工恢复口径：清掉旧的禁用/失败计数
         existing.status = "active"
         existing.err_count = 0
@@ -317,9 +329,15 @@ def _store_locked(credential: str, meta: dict, balance: dict, uid: str,
     acc.uid = uid
     acc.enterprise_id = meta.get("enterprise_id") or ""
     acc.domain = meta.get("domain") or ""
-    # 命名优先级：上游昵称 → 手机号 → uid（都用 _clean_nick 归一化，滤掉 "null"）
-    acc.name = (_clean_nick(meta.get("nickname")) or _clean_nick(meta.get("phone"))
-                or uid or "未命名")
+    # 手机号导入时，完整手机号优先于上游可能脱敏的昵称（方便追踪）
+    full_mobile = meta.get("full_phone") or (meta.get("phone") if meta.get("phone") and "****" not in str(meta.get("phone")) else "")
+    nick = _clean_nick(meta.get("nickname"))
+    if full_mobile:
+        acc.name = full_mobile
+    elif nick and "****" not in nick:
+        acc.name = nick
+    else:
+        acc.name = nick or meta.get("phone") or uid or "未命名"
     acc.status = "active"
     _apply_balance(acc)
     db.add(acc)

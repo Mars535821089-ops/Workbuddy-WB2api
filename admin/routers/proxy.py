@@ -2168,57 +2168,35 @@ def _pick_best_model(db: Session, requested_model: str,
             return requested_model
         return None  # 被白名单拒绝
 
-    # auto 模式：有配置时免费优先，无配置也从后端取模型列表自选（绝不透传 auto）
+    # auto 模式：直接路由为 auto 透传给上游，由上游根据当前任务内容智能匹配最佳模型（如 hy4-preview/deepseek-v4-pro 等）
     if allowed is not None:
-        # 分组内：免费优先，否则任意组内模型
-        free_in_group = _get_free_models(db) & allowed
-        if free_in_group:
-            return sorted(free_in_group)[0]
+        if "auto" in allowed:
+            return "auto"
+        best_priority = ["hy4-preview", "deepseek-v4-pro", "glm-5.2", "kimi-k3-1", "minimax-m3"]
+        for bm in best_priority:
+            if bm in allowed:
+                return bm
         if allowed:
             return sorted(allowed)[0]
         return None  # 分组内无可用模型（都被禁用）
 
-    if not has_any_config:
-        # Cache discovery: a chat must not fetch the model catalog on every turn.
-        try:
-            acc_tmp = _select_account(db)
-            if acc_tmp:
-                def fetch():
-                    with backend.AccountSession(acc_tmp.auth_json) as sess:
-                        return sess.fetch_models()
-                selected = model_catalog.auto_model(acc_tmp.auth_json, settings.BACKEND, fetch)
-                if selected:
-                    return selected
-        except Exception:
-            pass
-        return "deepseek-v4-flash"  # 兜底：无配置且后端不可达时用默认模型
-
-    free_models = _get_free_models(db)
-    if free_models:
-        return list(free_models)[0]  # 取第一个免费模型
-
-    # 无免费模型：取任意一个启用的
-    enabled = _get_enabled_models(db)
-    if enabled:
-        return list(enabled)[0]
-
-    return None  # 有配置但全禁用
+    return "auto"
 
 
 def _candidate_models(db: Session, tried: set, allowed: set[str] | None = None) -> list:
-    """按 免费→付费 顺序返回可用模型候选（排除已尝试的），用于 429/5xx 自动切换。
+    """按 最佳质量与可用模型 顺序返回可用模型候选（排除已尝试的），用于 429/5xx 自动切换。
 
     allowed 非 None 时（Key 绑定了分组）只在组内挑选，避免自动切换时
     悄悄把请求切到分组外的模型上。
     """
-    from admin.routers.models import _get_enabled_models, _get_free_models
-
-    free = _get_free_models(db) - tried
-    paid = (_get_enabled_models(db) - free) - tried
+    from admin.routers.models import _get_enabled_models
+    enabled = _get_enabled_models(db) - tried
     if allowed is not None:
-        free &= allowed
-        paid &= allowed
-    return list(free) + list(paid)
+        enabled &= allowed
+    top_models = ["hy4-preview", "deepseek-v4-pro", "glm-5.2", "kimi-k3-1", "minimax-m3", "hy3"]
+    result = [m for m in top_models if m in enabled]
+    result.extend(sorted(enabled - set(result)))
+    return result
 
 
 def _aggregate_chat_sse(sse_text: str) -> dict:

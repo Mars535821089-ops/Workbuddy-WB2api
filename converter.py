@@ -259,6 +259,11 @@ class CredentialManager:
         """Database-backed sessions need no intermediate credential file."""
         manager = cls(None)
         try:
+            from admin.credential_codec import normalize_credential
+            raw = normalize_credential(raw)
+        except Exception:
+            pass
+        try:
             manager._cached = json.loads(raw)
         except (TypeError, ValueError):
             raise CredentialError('账号凭证不是有效 JSON，请重新导入或授权登录') from None
@@ -283,7 +288,13 @@ class CredentialManager:
 
     def _read_raw(self) -> dict:
         with open(self.path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            raw = f.read()
+        try:
+            from admin.credential_codec import normalize_credential
+            raw = normalize_credential(raw)
+        except Exception:
+            pass
+        return json.loads(raw)
 
     def _load_if_stale(self):
         """若文件 mtime 变了（外部刷新过），重新加载缓存。"""
@@ -991,7 +1002,11 @@ async def chat_completions(request: Request,
     # 构造后端 body：只透传已知的合法字段
     client_wants_stream = bool(payload.get("stream"))
     body = {k: payload[k] for k in PASSTHROUGH_BODY_KEYS if k in payload}
-    body.setdefault("model", "auto")
+    req_m = (payload.get("model") or "auto").strip()
+    if not req_m or req_m.lower() in ("auto", "default", "none"):
+        body["model"] = "auto"
+    else:
+        body["model"] = req_m
 
     # 协议兼容层：role/tool_choice 归一、孤儿 tool_call 清理、思考开关翻译、
     # 档位归一、reasoning_content 回填、（可选）指纹脱敏。详见 upstream_compat.py。
