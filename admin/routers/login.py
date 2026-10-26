@@ -150,6 +150,17 @@ def _clean_nick(v) -> str:
     return "" if s.lower() in ("null", "none", "undefined") else s
 
 
+def _clean_phone_display(v) -> str:
+    """统一清洗手机号：去除 +86、86 等区号前缀，保持干干净净的 11 位纯手机号。"""
+    s = (v if isinstance(v, str) else "").strip()
+    if not s or s.lower() in ("null", "none", "undefined"):
+        return ""
+    cleaned = re.sub(r"^\+?86[\s-]*", "", s)
+    if re.match(r"^1[3-9]\d{9}$", cleaned):
+        return cleaned
+    return cleaned if s.startswith("+86") else s
+
+
 def _verify_and_store(sess, code: str, db: Session, account_id: Optional[int] = None) -> dict:
     """登录收尾的**唯一**实现：校验验证码 → 换凭证 → 双重校验 → 入池去重。
 
@@ -164,13 +175,11 @@ def _verify_and_store(sess, code: str, db: Session, account_id: Optional[int] = 
     except wb_login.WbLoginError as e:
         raise _fail(e, 502)
     meta = dict(result.get("meta") or {})
-    # 提取会话中的完整手机号（不脱敏），确保导入时保留完整号码
+    # 提取会话中的完整手机号（统一去除 +86，显示干干净净的 11 位纯手机号）
     if getattr(sess, "mobile", None):
-        raw_m = sess.mobile.strip()
-        cc = getattr(sess, "country_code", "86") or "86"
-        full_phone = f"+{cc} {raw_m}" if cc != "86" else raw_m
-        meta["phone"] = full_phone
-        meta["full_phone"] = full_phone
+        clean_m = _clean_phone_display(sess.mobile)
+        meta["phone"] = clean_m
+        meta["full_phone"] = clean_m
     return _store_verified_credential(result["credential"], meta, db, account_id=account_id)
 
 
@@ -289,11 +298,11 @@ def _store_locked(credential: str, meta: dict, balance: dict, uid: str,
         existing.uid = uid or existing.uid
         existing.enterprise_id = meta.get("enterprise_id") or ""
         existing.domain = meta.get("domain") or ""
-        full_mobile = meta.get("full_phone") or (meta.get("phone") if meta.get("phone") and "****" not in str(meta.get("phone")) else "")
-        if full_mobile:
+        full_mobile = _clean_phone_display(meta.get("full_phone") or meta.get("phone"))
+        if full_mobile and "****" not in full_mobile:
             existing.name = full_mobile
         else:
-            nick = _clean_nick(meta.get("nickname"))
+            nick = _clean_phone_display(_clean_nick(meta.get("nickname")))
             if nick and ("****" not in nick or not existing.name):
                 existing.name = nick
             elif not existing.name:
@@ -329,15 +338,15 @@ def _store_locked(credential: str, meta: dict, balance: dict, uid: str,
     acc.uid = uid
     acc.enterprise_id = meta.get("enterprise_id") or ""
     acc.domain = meta.get("domain") or ""
-    # 手机号导入时，完整手机号优先于上游可能脱敏的昵称（方便追踪）
-    full_mobile = meta.get("full_phone") or (meta.get("phone") if meta.get("phone") and "****" not in str(meta.get("phone")) else "")
-    nick = _clean_nick(meta.get("nickname"))
-    if full_mobile:
+    # 手机号导入时，完整纯净手机号优先于上游可能脱敏或带+86的昵称（方便追踪）
+    full_mobile = _clean_phone_display(meta.get("full_phone") or meta.get("phone"))
+    nick = _clean_phone_display(_clean_nick(meta.get("nickname")))
+    if full_mobile and "****" not in full_mobile:
         acc.name = full_mobile
     elif nick and "****" not in nick:
         acc.name = nick
     else:
-        acc.name = nick or meta.get("phone") or uid or "未命名"
+        acc.name = full_mobile or nick or meta.get("phone") or uid or "未命名"
     acc.status = "active"
     _apply_balance(acc)
     db.add(acc)

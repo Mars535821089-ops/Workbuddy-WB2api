@@ -481,7 +481,7 @@ def list_accounts(_: bool = Depends(require_admin), db: Session = Depends(get_db
     items = [
         {
             "id": a.id,
-            "name": a.name,
+            "name": re.sub(r'^\+?86[\s-]*', '', a.name) if a.name and (a.name.startswith('+86') or a.name.startswith('86')) else (a.name or ""),
             "uid": a.uid,
             "enterprise_id": a.enterprise_id,
             "domain": a.domain,
@@ -1623,7 +1623,8 @@ def patch_account(
         else:
             raise HTTPException(400, "并发上限必须是非负整数；留空跟随全局，0 表示不限")
     if "name" in body:
-        acc.name = body["name"]
+        new_name = str(body["name"]).strip()
+        acc.name = re.sub(r'^\+?86[\s-]*', '', new_name) if new_name.startswith('+86') or new_name.startswith('86') else new_name
     if "status" in body and body["status"] in ("active", "disabled"):
         acc.status = body["status"]
         if acc.status == 'disabled' and acc.cool_kind == 'session_dead':
