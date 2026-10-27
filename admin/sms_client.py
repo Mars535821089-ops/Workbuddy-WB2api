@@ -17,9 +17,9 @@ import httpx
 
 _logger = logging.getLogger("admin.sms_client")
 
-# 默认接码平台 API 地址与 Token
+# 默认接码平台 API 地址与 Token (可由环境变量 JICHI_SMS_TOKEN 或前端界面设置)
 DEFAULT_API_URL = "https://www.jichisms.com"
-DEFAULT_TOKEN = os.getenv("JICHI_SMS_TOKEN", "7755950de71f81b06a81c8c48b63bada")
+DEFAULT_TOKEN = os.getenv("JICHI_SMS_TOKEN", "")
 
 # 默认 WorkBuddy 推荐项目配置 (139372 实测秒接验证码)
 DEFAULT_ENGINE = "a"

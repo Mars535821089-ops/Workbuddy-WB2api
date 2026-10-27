@@ -4009,7 +4009,7 @@ let _arController = null;
 let _arRunning = false;
 
 function openAutoRegister() {
-  const savedToken = localStorage.getItem('ar_token') || '7755950de71f81b06a81c8c48b63bada';
+  const savedToken = localStorage.getItem('ar_token') || '';
   const savedEngine = localStorage.getItem('ar_engine') || 'a';
   const savedProjectId = localStorage.getItem('ar_project_id') || '139372';
   const savedProjectName = localStorage.getItem('ar_project_name') || 'workbuddy/codebuddy/腾讯科技二次';
@@ -4114,8 +4114,13 @@ function openAutoRegister() {
           </summary>
           <div class="mt-2.5 space-y-2.5 pt-2 border-t border-slate-200 dark:border-slate-700/60">
             <div>
-              <label class="text-[11px] text-slate-500 font-medium">疾驰短信 API Token</label>
-              <input id="arToken" type="text" value="${savedToken}"
+              <div class="flex items-center justify-between">
+                <label class="text-[11px] text-slate-500 font-medium">疾驰/极速云接码 API Token</label>
+                <a href="https://www.jichisms.com" target="_blank" class="text-[10px] text-emerald-600 hover:underline">
+                  <i class="fa-solid fa-arrow-up-right-from-square"></i> 获取 Token (jichisms.com)
+                </a>
+              </div>
+              <input id="arToken" type="text" value="${savedToken}" placeholder="可在极速云平台获取，留空将读取服务端 JICHI_SMS_TOKEN"
                      class="w-full border border-slate-300 dark:border-slate-700 dark:bg-slate-900 rounded px-2 py-1 text-xs font-mono mt-0.5" />
             </div>
             <div class="grid grid-cols-2 gap-2">
@@ -4279,7 +4284,7 @@ async function arStartRegistration() {
   const engine = $('#arEngine')?.value || 'b';
   const projectId = ($('#arProjectId')?.value || '').trim() || '77560';
   const projectName = ($('#arProjectName')?.value || '').trim() || '深圳市腾讯计算机系统';
-  const token = ($('#arToken')?.value || '').trim() || '7755950de71f81b06a81c8c48b63bada';
+  const token = ($('#arToken')?.value || '').trim();
   const cardType = $('#arCardType')?.value || 'physical';
   const maxWait = parseInt($('#arMaxWait')?.value || '60', 10);
   const retries = parseInt($('#arRetries')?.value || '3', 10);
