@@ -24,7 +24,7 @@ wire_api = "responses"              # ← 关键：使用 Responses API
 env_key = "CODEBUDDY2OPENAI_KEY"    # 转换器未启用 --api-key 时，可随便填一个环境变量名
 
 [profiles.workbuddy]
-model = "glm-5.2"                   # 也可用 kimi-k2.7 / deepseek-v4-pro / auto 等
+model = "glm-5.2"                   # 也可用 kimi-k2.7 / deepseek-v4-pro / Workbuddy-Auto 等
 model_provider = "workbuddy"
 
 # 然后设置环境变量（值随便填，除非转换器启用了 --api-key）：
@@ -39,7 +39,7 @@ model_provider = "workbuddy"
 # 转换器原生支持，只需在客户端的「自定义模型 / OpenAI 兼容」里填：
 #   接口地址 base_url : http://127.0.0.1:8787/v1
 #   API Key          : 留空（除非转换器启动时用了 --api-key）
-#   模型名 model     : glm-5.2 （或 kimi-k2.7 / deepseek-v4-pro / auto）
+#   模型名 model     : glm-5.2 （或 kimi-k2.7 / deepseek-v4-pro / Workbuddy-Auto）
 
 
 # ── 方式三：Claude Code（通过 CC Switch，Anthropic API）─────
@@ -54,6 +54,6 @@ model_provider = "workbuddy"
 # 通过 CC Switch 配置模型提供商，指向 Anthropic 端点：
 #   base_url : http://127.0.0.1:8787/v1/messages
 #   API Key  : 留空（除非转换器启动时用了 --api-key）
-#   模型名   : deepseek-v4-pro （或 glm-5.2 / kimi-k2.7 / auto 等 CodeBuddy 支持的模型）
+#   模型名   : deepseek-v4-pro （或 glm-5.2 / kimi-k2.7 / Workbuddy-Auto 等 CodeBuddy 支持的模型）
 #
 # 注意：模型名必须填 CodeBuddy 支持的名称，不做 Anthropic 名称到 CodeBuddy 名称的自动映射。

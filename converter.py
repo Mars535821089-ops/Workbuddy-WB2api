@@ -36,6 +36,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 import uvicorn
 from admin.upstream_errors import UpstreamError
+from admin.model_catalog import AUTO_MODEL_ID, is_auto_model
 
 import upstream_compat
 
@@ -615,7 +616,7 @@ class CredentialManager:
 # 静态兜底模型列表（仅在**取不到上游实时目录**时使用）。
 # 内容对齐实测的上游 cli agent 名单（2026-09 实测），不再用手写的过时清单。
 DEFAULT_MODELS = [
-    "auto", "hy4-preview", "hy3", "hy3-x",
+    AUTO_MODEL_ID, "hy4-preview", "hy3", "hy3-x",
     "deepseek-v4.1-flash", "deepseek-v4-pro", "deepseek-v4-flash",
     "glm-5.3", "glm-5.3-flash", "glm-5.2", "glm-5.1", "glm-5v-turbo",
     "kimi-k3-1", "kimi-k2.8-preview", "kimi-k2.7", "kimi-k2.6",
@@ -1002,9 +1003,10 @@ async def chat_completions(request: Request,
     # 构造后端 body：只透传已知的合法字段
     client_wants_stream = bool(payload.get("stream"))
     body = {k: payload[k] for k in PASSTHROUGH_BODY_KEYS if k in payload}
-    req_m = (payload.get("model") or "auto").strip()
-    if not req_m or req_m.lower() in ("auto", "default", "none"):
-        body["model"] = "auto"
+    req_m = (payload.get("model") or AUTO_MODEL_ID).strip()
+    if not req_m or is_auto_model(req_m) or req_m.lower() in ("default", "none"):
+        # 旧名 auto 仍接受，但发给上游的一律是规范名 Workbuddy-Auto。
+        body["model"] = AUTO_MODEL_ID
     else:
         body["model"] = req_m
 
@@ -1020,7 +1022,7 @@ async def chat_completions(request: Request,
     )
 
     # 日志：请求摘要
-    model_name = payload.get("model", "auto")
+    model_name = payload.get("model", AUTO_MODEL_ID)
     tool_names = [t.get("function", {}).get("name") for t in (payload.get("tools") or [])
                   if isinstance(t, dict)]
     last_user = _last_user_text(messages)
@@ -1383,7 +1385,7 @@ async def create_response(request: Request,
         raise HTTPException(status_code=400, detail={"error": {"message": f"request conversion error: {e}", "type": "invalid_request_error"}})
 
     chat_body, projection_stats = project_responses_chat_body(chat_body)
-    chat_body.setdefault("model", "auto")
+    chat_body.setdefault("model", AUTO_MODEL_ID)
 
     # 协议兼容层（与 chat 端点共用同一套改写）：role/tool_choice 归一、
     # 孤儿 tool_call 清理、思考开关翻译、档位归一、reasoning_content 回填、可选脱敏。
@@ -1395,7 +1397,7 @@ async def create_response(request: Request,
     )
 
     client_wants_stream = payload.get("stream", True)  # Codex CLI 默认 stream
-    model_name = payload.get("model", "auto")
+    model_name = payload.get("model", AUTO_MODEL_ID)
     rid = os.urandom(4).hex()
     _log(f"[{rid}] ▶ RESPONSES {model_name} | stream={client_wants_stream} | input_items={len(payload.get('input', []))}")
     _log(
@@ -1514,7 +1516,7 @@ async def create_message(request: Request,
     except Exception as e:
         raise HTTPException(status_code=400, detail={"error": {"message": f"request conversion error: {e}", "type": "invalid_request_error"}})
 
-    chat_body.setdefault("model", "auto")
+    chat_body.setdefault("model", AUTO_MODEL_ID)
     supported = _supported_efforts_for(cred, chat_body.get("model"))
     upstream_compat.prepare_upstream_body(
         chat_body,
@@ -1529,7 +1531,7 @@ async def create_message(request: Request,
                                      compact_harness=not CONFIG.get("no_compact"),
                                      strip_tool_metadata=True)
 
-    model_name = payload.get("model", "auto")
+    model_name = payload.get("model", AUTO_MODEL_ID)
     chat_messages = chat_body.get("messages", [])
     rid = os.urandom(4).hex()
     _log(f"[{rid}] ▶ ANTHROPIC {model_name} | msgs={len(chat_messages)} | anthropic_msgs={len(messages)}")

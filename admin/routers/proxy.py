@@ -2125,7 +2125,9 @@ def _key_allowed_models(db: Session, key) -> set[str] | None:
         db.rollback()
         raise HTTPException(503, {"error": {"message": "无法获取绑定账号的模型权益，请稍后重试",
                                            "type": "bound_account_unavailable"}}) from None
-    entitled = {m["id"] for m in rows or [] if m.get("id") and m["id"].lower() != "auto"}
+    # 聚合模型不算「具体模型权益」：用户传自动择优时走上游智能路由，不需要它出现在这里。
+    entitled = {m["id"] for m in rows or []
+                if m.get("id") and not model_catalog.is_auto_model(m.get("id"))}
     configs = db.query(ModelConfig).all()
     if configs:
         entitled &= {c.model_id for c in configs if c.enabled}
@@ -2146,7 +2148,8 @@ def _pick_best_model(db: Session, requested_model: str,
 
     策略：
       - 用户指定了具体模型 → 校验白名单后直接用（或返回 None 表示被拒）
-      - 用户传 "auto" 或空 → 优先选免费模型（credit_multiplier=0），没有免费的才选付费的
+      - 用户传自动择优模型（规范名 Workbuddy-Auto，旧名 auto 与空值同样接受）
+        → 原样透传给上游的 Workbuddy-Auto，由上游按当前任务内容智能匹配最佳模型
       - 未配置任何模型规则时放行全部（向后兼容），返回原始 model
       - allowed 非 None 时（Key 绑定了分组），只在 allowed 集合内选择
     """
@@ -2157,7 +2160,7 @@ def _pick_best_model(db: Session, requested_model: str,
     has_any_config = db.query(ModelConfig).first() is not None
 
     # 具体模型：有配置时校验白名单，无配置直接放行
-    if requested_model and requested_model != "auto":
+    if requested_model and not model_catalog.is_auto_model(requested_model):
         if allowed is not None:
             # 绑定了分组：只认组内模型，优先于全局白名单判定，
             # 组内没有就是没权限（比白名单更严格，语义更明确）
@@ -2168,10 +2171,12 @@ def _pick_best_model(db: Session, requested_model: str,
             return requested_model
         return None  # 被白名单拒绝
 
-    # auto 模式：直接路由为 auto 透传给上游，由上游根据当前任务内容智能匹配最佳模型（如 hy4-preview/deepseek-v4-pro 等）
+    # 自动择优模式：统一路由为规范名 Workbuddy-Auto 透传给上游，
+    # 由上游根据当前任务内容智能匹配最佳模型（如 hy4-preview / deepseek-v4-pro）。
+    # 分组里配了自动择优模型（新名或旧名）就直接用它，否则按质量优先级降级。
     if allowed is not None:
-        if "auto" in allowed:
-            return "auto"
+        if any(model_catalog.is_auto_model(m) for m in allowed):
+            return model_catalog.AUTO_MODEL_ID
         best_priority = ["hy4-preview", "deepseek-v4-pro", "glm-5.2", "kimi-k3-1", "minimax-m3"]
         for bm in best_priority:
             if bm in allowed:
@@ -2180,7 +2185,7 @@ def _pick_best_model(db: Session, requested_model: str,
             return sorted(allowed)[0]
         return None  # 分组内无可用模型（都被禁用）
 
-    return "auto"
+    return model_catalog.AUTO_MODEL_ID
 
 
 def _candidate_models(db: Session, tried: set, allowed: set[str] | None = None) -> list:
@@ -2397,18 +2402,18 @@ def _map_anthropic_model(db: Session, model: str, key: "ApiKey | None" = None) -
     """把 Anthropic 的模型名翻译成本后台白名单里的模型名。
 
     按顺序判定：
-      1. 空 / auto                 → auto（由号池按免费优先自选）
+      1. 空 / 自动择优（Workbuddy-Auto，旧名 auto）→ Workbuddy-Auto（由上游智能择优）
       2. 具体上游模型名           → 保留原名，由统一权限检查决定是否允许
       3. Claude 的 opus/sonnet/haiku 别名 → 取配置的对应档次模型，再检查权限
-      4. 其它 claude-* 别名        → auto
+      4. 其它 claude-* 别名        → Workbuddy-Auto
 
-    移出分组或禁用的具体模型不能退回 auto，否则一次应被拒绝的调用
+    移出分组或禁用的具体模型不能退回自动择优，否则一次应被拒绝的调用
     会静默改用其它模型并成功。档次映射目标也遵守相同的权限检查。
     """
     allowed = _key_group_models(db, key)
     m = (model or "").strip()
-    if not m or m == "auto":
-        return "auto"
+    if not m or model_catalog.is_auto_model(m):
+        return model_catalog.AUTO_MODEL_ID
     if (not m.lower().startswith("claude-")
             or db.query(ModelConfig.id).filter(ModelConfig.model_id == m).first() is not None
             or (allowed is not None and m in allowed)):
@@ -2417,7 +2422,7 @@ def _map_anthropic_model(db: Session, model: str, key: "ApiKey | None" = None) -
     for tier, target in _ANTHROPIC_MODEL_TIERS:
         if tier in low and target:
             return target
-    return "auto"
+    return model_catalog.AUTO_MODEL_ID
 
 
 @router.post("/v1/chat/completions")
@@ -2451,21 +2456,21 @@ async def chat_completions(
     except Exception:
         return JSONResponse(status_code=400, content={"error": {"message": "bad json", "type": "invalid_request"}})
 
-    model = payload.get("model", "auto")
+    model = payload.get("model", model_catalog.AUTO_MODEL_ID)
 
-    # 模型白名单检查 + 免费优先选择（绑定了分组的 Key 只在组内选择）
+    # 模型白名单检查 + 自动择优路由（绑定了分组的 Key 只在组内选择）
     allowed = await _blocking_call(_key_allowed_models, db, key)
     resolved_model = await _blocking_call(_pick_best_model, db, model, allowed)
     if resolved_model is None:
-        if allowed is not None and model not in ("auto", ""):
+        if allowed is not None and model and not model_catalog.is_auto_model(model):
             return _model_access_error(key, model)
         return JSONResponse(
             status_code=400,
             content={"error": {"message": f"模型 '{model}' 不存在或已被禁用", "type": "model_not_found"}},
         )
 
-    # 候选模型顺序：auto 模式按 免费→付费 排列，支持上游 429/5xx 自动切换下一个
-    if model in ("auto", ""):
+    # 候选模型顺序：自动择优按质量优先级排列，支持上游 429/5xx 自动切换下一个
+    if not model or model_catalog.is_auto_model(model):
         order = [resolved_model] + await _blocking_call(_candidate_models, db, {resolved_model}, allowed)
         order = order[:8]  # 最多尝试 8 个，避免全局限流时反复重试
     else:
@@ -2964,28 +2969,28 @@ async def responses_proxy(
                             content={"error": {"message": f"请求转换失败：{e}", "type": "invalid_request"}})
 
     chat_body, _stats = project_responses_chat_body(chat_body)
-    chat_body.setdefault("model", "auto")
+    chat_body.setdefault("model", model_catalog.AUTO_MODEL_ID)
     chat_body["stream"] = True
     opts = dict(chat_body.get("stream_options") or {})
     opts["include_usage"] = True
     chat_body["stream_options"] = opts
 
-    requested = payload.get("model", "auto")
+    requested = payload.get("model", model_catalog.AUTO_MODEL_ID)
     allowed = await _blocking_call(_key_allowed_models, db, key)
     resolved = await _blocking_call(_pick_best_model, db, requested, allowed)
     if resolved is None:
-        if allowed is not None and requested not in ("auto", ""):
+        if allowed is not None and requested and not model_catalog.is_auto_model(requested):
             return _model_access_error(key, requested)
         return JSONResponse(status_code=400,
                             content={"error": {"message": f"模型 '{requested}' 不存在或已被禁用", "type": "model_not_found"}})
 
     order = [resolved]
-    if requested in ("auto", ""):
+    if not requested or model_catalog.is_auto_model(requested):
         order = [resolved] + await _blocking_call(_candidate_models, db, {resolved}, allowed)
         order = order[:8]
 
     client_wants_stream = bool(payload.get("stream", True))
-    model_name = payload.get("model", "auto")
+    model_name = payload.get("model", model_catalog.AUTO_MODEL_ID)
     url = f"{settings.BACKEND}/v2/chat/completions"
 
     # 会话粘性键与会话头族：在轮转循环外算一次，循环内所有尝试复用同一份
@@ -3442,17 +3447,18 @@ async def anthropic_messages(
     # Claude Code 的真实请求基本发不出去（简单 hello 测试却会通过，很容易误判）。
     chat_body = _desensitize_chat_body(chat_body)
 
-    requested = await _blocking_call(_map_anthropic_model, db, payload.get("model", "auto"), key)
+    requested = await _blocking_call(_map_anthropic_model, db,
+                                     payload.get("model", model_catalog.AUTO_MODEL_ID), key)
     allowed = await _blocking_call(_key_allowed_models, db, key)
     resolved = await _blocking_call(_pick_best_model, db, requested, allowed)
     if resolved is None:
-        if allowed is not None and requested not in ("auto", ""):
+        if allowed is not None and requested and not model_catalog.is_auto_model(requested):
             return _model_access_error(key, requested)
         return JSONResponse(status_code=400,
                             content={"error": {"message": f"模型 '{requested}' 不存在或已被禁用", "type": "model_not_found"}})
 
     order = [resolved]
-    if requested in ("auto", ""):
+    if not requested or model_catalog.is_auto_model(requested):
         order = ([resolved] + await _blocking_call(_candidate_models, db, {resolved}, allowed))[:8]
 
     # 上游一律按流式拉取：Anthropic 的方向就是「消费 Chat SSE 再转事件流」。
@@ -3464,7 +3470,7 @@ async def anthropic_messages(
 
     # Anthropic Messages API 的 stream 默认是 false
     client_wants_stream = bool(payload.get("stream", False))
-    model_name = payload.get("model", "auto")
+    model_name = payload.get("model", model_catalog.AUTO_MODEL_ID)
     url = f"{settings.BACKEND}/v2/chat/completions"
 
     # 会话粘性键与会话头族：轮转循环外算一次，循环内所有尝试复用同一份。
@@ -4000,7 +4006,9 @@ def models(
                             "base_credit_multiplier": backend.CredentialManager._parse_credit_multiplier(m.get("credits"))
                             if hasattr(backend.CredentialManager, "_parse_credit_multiplier") else None,
                         } for m in models_raw
-                            if m.get("id") and m.get("id", "").lower() != "auto"
+                            # 旧名 auto 已废弃，若上游/缓存里还残留就不对外暴露；
+                            # 规范名 Workbuddy-Auto 属于正常模型，照常出现在 /v1/models 里。
+                            if m.get("id") and str(m.get("id", "")).strip().lower() != "auto"
                             and (m.get("id") in allowed if allowed is not None else
                                  not configs or m.get("id") in enabled_ids)]
                         _note_success(db, acc)

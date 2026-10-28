@@ -542,7 +542,7 @@ WORKBUDDY_VERSION              # 默认 2.0.0
 
 Anthropic 端点（`/v1/messages`）相关：
 
-- `ADMIN_ANTHROPIC_MODEL_OPUS` / `ADMIN_ANTHROPIC_MODEL_SONNET` / `ADMIN_ANTHROPIC_MODEL_HAIKU` —— Claude 的模型名按这三个档次映射到白名单模型，默认 `deepseek-v4-pro` / `glm-5.2` / `glm-5.3-flash`。**不要设成 `auto`**：本后台的 `auto` 语义是「取第一个启用的模型」，在 20+ 个模型里可能挑到不适合写代码的，甚至图像模型。
+- `ADMIN_ANTHROPIC_MODEL_OPUS` / `ADMIN_ANTHROPIC_MODEL_SONNET` / `ADMIN_ANTHROPIC_MODEL_HAIKU` —— Claude 的模型名按这三个档次映射到白名单模型，默认 `deepseek-v4-pro` / `glm-5.2` / `glm-5.3-flash`。**不要设成 `Workbuddy-Auto`（旧名 `auto`）**：那是「自动择优」聚合模型，具体落哪个模型由上游决定，不适合固定在某个翻译档次上。
 - `ADMIN_ANTHROPIC_DESENSITIZE`（默认 `1`）—— harness 脱敏开关，见 §6 说明，**关掉基本发不出去**
 - `ADMIN_ANTHROPIC_NO_COMPACT`（默认 `0`）—— 只做零宽脱敏、跳过 harness 压缩
 
@@ -1639,7 +1639,7 @@ codex --profile workbuddy "你的任务描述"
 
 - Base URL：`http://127.0.0.1:8790/v1`（共享平台）或 `:8787/v1`（本机直连）
 - API Key：留空，或填启动时 `--api-key` / 后台创建的 `wb-...` Key
-- 模型名：`glm-5.2` / `deepseek-v4-pro` / `kimi-k2.7` / `auto` 等
+- 模型名：`glm-5.2` / `deepseek-v4-pro` / `kimi-k2.7` / `Workbuddy-Auto`（自动择优，旧名 `auto` 仍兼容）等
 
 ```bash
 curl -N http://127.0.0.1:8790/v1/chat/completions \

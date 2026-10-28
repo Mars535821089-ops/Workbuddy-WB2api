@@ -242,8 +242,13 @@ def _sync_models_locked(db: Session, account_id: int | None = None) -> dict:
     seen = {m.model_id for m in db.query(ModelConfig.model_id).all()}
     for m in models_raw:
         mid = m.get("id")
-        if not mid or mid.lower() == "auto":
-            continue  # 跳过上游聚合模型 "auto"，我们系统有自己的免费优先 auto 逻辑
+        if not mid:
+            continue
+        if str(mid).strip().lower() == "auto":
+            # 旧名 auto 已废弃（上游改名为 Workbuddy-Auto，见 model_catalog.AUTO_MODEL_ID）。
+            # 只跳过这个旧名，避免管理页残留一个永远调不通的模型；
+            # 新名 Workbuddy-Auto 属于正常上游模型，照常入库并在列表里可选。
+            continue
         # 解析积分倍率
         raw_credits = m.get("credits") or ""
         multiplier = credit_number(raw_credits) or 0.0
