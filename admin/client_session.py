@@ -20,6 +20,7 @@
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import signal
@@ -285,26 +286,85 @@ def quit_client(app_path: str | None = None, pids: list[int] | None = None,
     return {"was_running": True, "exited": not alive, "timeout": bool(alive)}
 
 
+def _mac_executable(app_path: str) -> str | None:
+    """The real binary inside an .app bundle, so we can pass argv to it.
+
+    `open -a` cannot take arguments, and we need to hand Electron our DNS
+    overrides - so resolve Contents/MacOS/<exe> and run that directly.
+    """
+    macos = os.path.join(app_path, "Contents", "MacOS")
+    if not os.path.isdir(macos):
+        return None
+    plist = os.path.join(app_path, "Contents", "Info.plist")
+    name = None
+    if os.path.exists(plist):
+        try:
+            done = subprocess.run(
+                ["/usr/bin/plutil", "-convert", "json", "-o", "-", "--", plist],
+                capture_output=True, text=True, timeout=5)
+            name = (json.loads(done.stdout) or {}).get("CFBundleExecutable")
+        except Exception:
+            name = None
+    for candidate in (name,):
+        if candidate:
+            target = os.path.join(macos, candidate)
+            if os.path.isfile(target) and os.access(target, os.X_OK):
+                return target
+    try:
+        entries = sorted(os.listdir(macos))
+    except Exception:
+        return None
+    for entry in entries:
+        target = os.path.join(macos, entry)
+        if os.path.isfile(target) and os.access(target, os.X_OK):
+            return target
+    return None
+
+
 def launch_client(app_path: str | None = None, wait: bool = True,
-                  timeout: float = 20.0) -> dict[str, Any]:
-    """重新启动客户端，并（可选）等到它真的出现进程为止。"""
+                  timeout: float = 20.0, adapt_dns: bool = True) -> dict[str, Any]:
+    """重新启动客户端，并（可选）等到它真的出现进程为止。
+
+    adapt_dns: 若本机 DNS 把云端域名解析到不可达地址，就给这个进程塞一份
+    Chromium 的 --host-resolver-rules（仅对该进程生效，不改系统任何配置），
+    否则客户端的会话列表、模型列表都拉不下来。
+    """
     path = app_path or app_install_path(os.getenv("ADMIN_CLIENT_APP", ""))
     if not path:
         return {"launched": False, "app_path": None, "reason": "找不到客户端安装位置"}
+
+    extra: list[str] = []
+    dns_detail: dict = {}
+    if adapt_dns:
+        try:
+            from admin.network_adapt import electron_args
+            extra, dns_detail = electron_args()
+        except Exception as exc:          # 探测失败不该挡住拉起
+            dns_detail = {"error": f"{type(exc).__name__}: {exc}"}
+
     launched = False
     try:
         if IS_MAC:
-            launched = subprocess.run(["/usr/bin/open", "-a", path],
-                                      capture_output=True, text=True,
-                                      timeout=15).returncode == 0
+            exe = _mac_executable(path)
+            if exe:
+                argv = [exe] + extra
+                subprocess.Popen(argv, stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 start_new_session=True, close_fds=True)
+                launched = True
+            else:
+                launched = subprocess.run(["/usr/bin/open", "-a", path],
+                                          capture_output=True, text=True,
+                                          timeout=15).returncode == 0
         elif IS_WIN:
-            subprocess.Popen([path], close_fds=True)
+            subprocess.Popen([path] + extra, close_fds=True)
             launched = True
         else:
             if shutil.which(path):
-                subprocess.Popen([path], close_fds=True)
+                subprocess.Popen([path] + extra, close_fds=True)
                 launched = True
     except Exception:
         launched = False
     running = wait_running(path, timeout=timeout) if (launched and wait) else False
-    return {"launched": launched, "app_path": path, "running": running}
+    return {"launched": launched, "app_path": path, "running": running,
+            "dns_overrides": dns_detail or None, "chromium_args": extra or None}

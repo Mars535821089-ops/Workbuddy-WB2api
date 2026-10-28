@@ -52,6 +52,27 @@ class InjectIn(BaseModel):
     restart: bool = True
 
 
+
+_UPSTREAM = "https://copilot.tencent.com"
+# 手机号渠道账号（中国移动 TokenPlan 等）：客户端对这类账号会显示「中国移动模型」分组。
+_PHONE_CHANNEL_PREFIXES = {
+    "134", "135", "136", "137", "138", "139", "147", "148", "150", "151", "152",
+    "157", "158", "159", "172", "178", "182", "183", "184", "187", "188", "195",
+    "197", "198", "130", "131", "132", "145", "146", "155", "156", "166", "175",
+    "176", "185", "186", "196", "133", "149", "153", "173", "174", "177", "180",
+    "181", "189", "199",
+}
+
+
+def _client_backups(d: str) -> list[str]:
+    """本机客户端可用的备份列表（新的在前）。"""
+    if not os.path.isdir(d):
+        return []
+    names = [f for f in os.listdir(d) if f.startswith("workbuddy-desktop.info.bak-")]
+    names.sort(reverse=True)
+    return names
+
+
 class ImportLocalIn(BaseModel):
     files: list[str] = []  # 指定文件名；含 "all" 或 all=true 表示全部
     all: bool = False
@@ -1121,8 +1142,49 @@ def inject_to_client(acc_id: int, body: InjectIn, _: bool = Depends(require_admi
         "client_was_running": was_running,
         "client_restarted": bool(relaunch.get("launched")) and need_restart,
         "client_running_now": bool(relaunch.get("running")),
+        "dns_adapted": relaunch.get("dns_overrides"),
         "note": note,
     }
+
+
+class RestartClientIn(BaseModel):
+    confirm: bool = False
+
+
+@router.post("/client/relaunch")
+def relaunch_client(body: RestartClientIn, _: bool = Depends(require_admin)):
+    """只重启客户端，不动登录态。
+
+    本机 DNS 把云端域名解析到连不上的地址时（代理工具的 fake-ip 段最常见），
+    客户端的请求全部打黑洞，表现就是会话列表空、模型列表加载不出来。这条
+    路由在拉起时给客户端进程本身一份 DNS 映射绕开它——不写 hosts、不改系统
+    代理、不动任何全局配置，只对这一次启动的实例生效，退出即失效。
+    """
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="需要 confirm=true 才执行")
+    info = cs.detect_client()
+    if not info["pids"]:
+        return {"ok": False, "was_running": False,
+                "note": "客户端当前没有在运行，无需重启。"}
+    if not info["app_path"]:
+        raise HTTPException(status_code=409, detail="找不到客户端安装位置，无法重启。")
+    q = cs.quit_client(info["app_path"], info["pids"])
+    if not (q.get("was_running") and q.get("exited")):
+        raise HTTPException(status_code=409, detail="客户端未能在预期时间内退出，本次未做改动。")
+    relaunch = cs.launch_client(info["app_path"])
+    time.sleep(0.5)
+    relaunch["pids"] = cs.client_pids(info["app_path"])
+    relaunch["running"] = bool(relaunch["pids"]) or bool(relaunch.get("running"))
+    return {
+        "ok": True,
+        "launched": bool(relaunch.get("launched")),
+        "running": bool(relaunch.get("running")),
+        "dns_adapted": relaunch.get("dns_overrides"),
+        "note": ("客户端已带网络适配重启，会话列表应能正常加载。"
+                 if relaunch.get("running")
+                 else "已尝试拉起但未检测到进程，请手动打开确认。"),
+    }
+
 
 
 def _run_refresh_batch(ids, job):

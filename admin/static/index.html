@@ -2447,16 +2447,17 @@ async function toggleAcc(id,st){ await api("/api/accounts/"+id,{method:"PATCH",h
 async function delAcc(id){ if(!await uiConfirm({message:"确认删除该账号？", title:"删除账号"}))return; const r=await api("/api/accounts/"+id,{method:"DELETE"}); toast(r.ok?"已删除":"删除失败",r.ok?"ok":"err"); if(r.ok) loadAccounts(); }
 async function injectAcc(id){
   if(!await uiConfirm({kind:"warn", danger:false, title:"注入本机客户端",
-      message:"确认把该账号注入到本机 WorkBuddy 客户端？\n① 自动备份当前登录态\n② 客户端会自动退出并重启，让全部会话同步到该账号\n（未打开客户端则只写登录态，下次启动生效）",
+      message:"确认把该账号注入到本机 WorkBuddy 客户端？\n① 自动备份当前登录态\n② 客户端自动退出并重启，会话同步到该账号",
       okText:"确认注入并同步"})) return;
   const r = await api("/api/accounts/"+id+"/inject",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirm:true,restart:true})});
   const d = await r.json().catch(()=>({}));
   if(r.ok){
     const bk = d.backup ? d.backup.split(/[\\/]/).pop() : "无";
-    if(d.client_restarted) toast(`已注入并重启客户端（${d.account||""}），会话已同步｜备份: ${bk}`, d.client_running_now?"ok":"warn");
-    else toast(`已注入登录态（备份: ${bk}）。${d.note||""}`, d.client_was_running?"warn":"ok");
-  }
-  else { toast("注入失败: "+(d.detail||""), "err"); }
+    if(d.client_restarted){
+      const adap = d.dns_adapted ? "｜已绕开本机 DNS 劫持" : "";
+      toast(`已注入并重启客户端（${d.account||""}），会话已同步${adap}｜备份: ${bk}`, d.client_running_now?"ok":"warn");
+    } else toast(`已注入登录态（备份: ${bk}）。${d.note||""}`, d.client_was_running?"warn":"ok");
+  } else toast("注入失败: "+(d.detail||""), "err");
 }
 
 /* 猫猫旅行：同意协议 → 首次领养(+300) → 派猫 → 领奖。逐步展示结果。 */
