@@ -45,6 +45,11 @@ class AccountBatchIn(BaseModel):
 
 class InjectIn(BaseModel):
     confirm: bool = False
+    # 默认 True：注入后自动重启客户端，让所有会话同步到新账号。
+    # 客户端只在启动时读一次登录态文件，运行中还会把旧会话写回同一个文件，
+    # 所以「先退出 → 写文件 → 再拉起」是唯一能立刻生效的顺序。
+    # 传 False 退化成旧的「只写文件」行为，留给不想动自己窗口的场景。
+    restart: bool = True
 
 
 class ImportLocalIn(BaseModel):
@@ -1033,25 +1038,91 @@ def export_one_account(
 
 @router.post("/{acc_id}/inject")
 def inject_to_client(acc_id: int, body: InjectIn, _: bool = Depends(require_admin), db: Session = Depends(get_db)):
-    """把号池里某账号的 .info 注入到本机客户端的活动登录文件（先备份当前登录态）。"""
+    """把号池里某账号的 .info 注入到本机客户端的活动登录文件（先备份当前登录态）。
+
+    默认还会同步会话：客户端正在跑就先让它退出（否则写了不生效、还会被它自己的
+    旧会话覆盖），落盘成功后再原样拉起，所有窗口重开后统一是新账号。
+    """
     acc = db.query(Account).filter(Account.id == acc_id).first()
     if not acc:
         raise HTTPException(status_code=404, detail="账号不存在")
     if not body.confirm:
         raise HTTPException(status_code=400, detail="需要 confirm=true 才执行注入")
+    # 先把凭证算出来：这一步会失败就让它失败在动客户端之前，别把人家的窗口关了做无用功。
     raw = _client_export(acc.auth_json)
     d = _client_auth_dir()
     if not os.path.isdir(d):
         raise HTTPException(status_code=500, detail=f"客户端登录目录不存在: {d}")
+
+    import admin.client_session as cs
     target = os.path.join(d, "workbuddy-desktop.info")
-    backup = None
-    if os.path.exists(target):
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        backup = target + f".bak-{ts}"
-        shutil.copy2(target, backup)
-    with open(target, "w", encoding="utf-8") as f:
-        f.write(raw)
-    return {"ok": True, "target": target, "backup": backup, "account": acc.name, "uid": acc.uid}
+    info = cs.detect_client()
+    was_running = bool(info["pids"])
+    need_restart = bool(body.restart) and was_running
+    quitted = False
+
+    if need_restart and not info["app_path"]:
+        raise HTTPException(
+            status_code=409,
+            detail="客户端正在运行，但没找到它的安装位置，无法自动同步会话。"
+                   "请手动退出客户端后重试，或用 ADMIN_CLIENT_APP 指定 app 路径。")
+
+    try:
+        if need_restart:
+            # ① 先让客户端退出，并等它彻底死透——它活着就会把旧会话写回同一文件
+            q = cs.quit_client(info["app_path"], info["pids"])
+            quitted = q["was_running"] and q["exited"]
+            if not quitted:
+                raise HTTPException(
+                    status_code=409,
+                    detail="客户端未能在预期时间内退出。为避免新凭证被它覆盖，已放弃本次注入。")
+
+        # ② 写文件（此时已经没有客户端会跟它抢写）
+        backup = None
+        if os.path.exists(target):
+            ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+            backup = target + f".bak-{ts}"
+            shutil.copy2(target, backup)
+        with open(target, "w", encoding="utf-8") as f:
+            f.write(raw)
+            f.flush()
+            os.fsync(f.fileno())
+    except HTTPException:
+        if quitted:
+            cs.launch_client(info["app_path"])
+        raise
+    except Exception as exc:
+        if quitted:
+            cs.launch_client(info["app_path"])
+        raise HTTPException(status_code=500, detail=f"写入客户端登录态失败: {exc}") from exc
+
+    # ③ 拉回客户端，并确认它真的起来了
+    relaunch = {"launched": False, "running": False}
+    if quitted:
+        relaunch = cs.launch_client(info["app_path"])
+        time.sleep(0.5)
+        relaunch["pids"] = cs.client_pids(info["app_path"])
+        relaunch["running"] = bool(relaunch["pids"]) or bool(relaunch.get("running"))
+
+    if need_restart:
+        note = ("客户端已重启，会话已同步到该账号。" if relaunch.get("running")
+                else "登录态已写入，客户端也已尝试拉起，但未检测到进程，请手动打开确认。")
+    elif was_running:
+        note = "客户端仍在运行，登录态已写入但本次未重启——重启客户端后才切换。"
+    else:
+        note = "客户端未在运行，登录态已写入；下次启动客户端即生效。"
+
+    return {
+        "ok": True,
+        "target": target,
+        "backup": backup,
+        "account": acc.name,
+        "uid": acc.uid,
+        "client_was_running": was_running,
+        "client_restarted": bool(relaunch.get("launched")) and need_restart,
+        "client_running_now": bool(relaunch.get("running")),
+        "note": note,
+    }
 
 
 def _run_refresh_batch(ids, job):
