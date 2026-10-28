@@ -7,4 +7,12 @@
 # 日志：logs/launchd-stdout.log / logs/launchd-stderr.log
 
 cd "$HOME/projects/Workbuddy-WB2api" || exit 1
-exec /usr/bin/env -u PYTHONPATH "$HOME/.pyenv/shims/python3" main.py --host 127.0.0.1 --port 8790
+
+# 剥离全部代理变量：上游 copilot.tencent.com 直连即可；若继承 AI 会话的
+# 本地代理端口，代理随会话死亡后网关所有出站请求都会 Connection refused
+# （2026-10-28 16:08 故障根因）。
+exec /usr/bin/env -u PYTHONPATH \
+  -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u NO_PROXY \
+  -u http_proxy -u https_proxy -u all_proxy -u no_proxy \
+  -u AGY_PROXY \
+  "$HOME/.pyenv/shims/python3" main.py --host 127.0.0.1 --port 8790
