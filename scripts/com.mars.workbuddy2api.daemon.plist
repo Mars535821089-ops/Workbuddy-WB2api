@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mars.workbuddy2api</string>
+    <!-- 系统域守护进程：开机即启动，无需用户登录。必须显式指定运行身份，
+         否则会以 root 运行，导致 projects 下的数据库与日志文件变成 root 属主。 -->
+    <key>UserName</key>
+    <string>mars</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>/Users/mars/projects/Workbuddy-WB2api/scripts/boot-all.sh</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/mars/projects/Workbuddy-WB2api</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/mars</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/mars/projects/Workbuddy-WB2api/logs/launchd-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mars/projects/Workbuddy-WB2api/logs/launchd-stderr.log</string>
+</dict>
+</plist>
