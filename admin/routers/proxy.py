@@ -2148,8 +2148,8 @@ def _pick_best_model(db: Session, requested_model: str,
 
     策略：
       - 用户指定了具体模型 → 校验白名单后直接用（或返回 None 表示被拒）
-      - 用户传自动择优模型（规范名 Workbuddy-Auto，旧名 auto 与空值同样接受）
-        → 原样透传给上游的 Workbuddy-Auto，由上游按当前任务内容智能匹配最佳模型
+      - 用户传自动择优模型（客户端显示名 Workbuddy-Auto、接口 id auto，空值同样接受）
+        → 统一路由为接口 id "auto" 透传给上游，由上游按当前任务内容智能匹配最佳模型
       - 未配置任何模型规则时放行全部（向后兼容），返回原始 model
       - allowed 非 None 时（Key 绑定了分组），只在 allowed 集合内选择
     """
@@ -2171,9 +2171,9 @@ def _pick_best_model(db: Session, requested_model: str,
             return requested_model
         return None  # 被白名单拒绝
 
-    # 自动择优模式：统一路由为规范名 Workbuddy-Auto 透传给上游，
+    # 自动择优模式：统一路由为上游接口 id "auto"（客户端显示名 Workbuddy-Auto），
     # 由上游根据当前任务内容智能匹配最佳模型（如 hy4-preview / deepseek-v4-pro）。
-    # 分组里配了自动择优模型（新名或旧名）就直接用它，否则按质量优先级降级。
+    # 分组里配了自动择优模型（显示名或接口 id）就直接用它，否则按质量优先级降级。
     if allowed is not None:
         if any(model_catalog.is_auto_model(m) for m in allowed):
             return model_catalog.AUTO_MODEL_ID
@@ -2402,10 +2402,10 @@ def _map_anthropic_model(db: Session, model: str, key: "ApiKey | None" = None) -
     """把 Anthropic 的模型名翻译成本后台白名单里的模型名。
 
     按顺序判定：
-      1. 空 / 自动择优（Workbuddy-Auto，旧名 auto）→ Workbuddy-Auto（由上游智能择优）
+      1. 空 / 自动择优（显示名 Workbuddy-Auto，接口 id auto）→ "auto"（由上游智能择优）
       2. 具体上游模型名           → 保留原名，由统一权限检查决定是否允许
       3. Claude 的 opus/sonnet/haiku 别名 → 取配置的对应档次模型，再检查权限
-      4. 其它 claude-* 别名        → Workbuddy-Auto
+      4. 其它 claude-* 别名        → "auto"
 
     移出分组或禁用的具体模型不能退回自动择优，否则一次应被拒绝的调用
     会静默改用其它模型并成功。档次映射目标也遵守相同的权限检查。
@@ -4006,9 +4006,9 @@ def models(
                             "base_credit_multiplier": backend.CredentialManager._parse_credit_multiplier(m.get("credits"))
                             if hasattr(backend.CredentialManager, "_parse_credit_multiplier") else None,
                         } for m in models_raw
-                            # 旧名 auto 已废弃，若上游/缓存里还残留就不对外暴露；
-                            # 规范名 Workbuddy-Auto 属于正常模型，照常出现在 /v1/models 里。
-                            if m.get("id") and str(m.get("id", "")).strip().lower() != "auto"
+                            # 「自动择优」聚合模型（接口 id auto / 显示名 Workbuddy-Auto）
+                            # 不进 /v1/models：它由网关内部路由，不是可直选的上游模型。
+                            if m.get("id") and not model_catalog.is_auto_model(m.get("id"))
                             and (m.get("id") in allowed if allowed is not None else
                                  not configs or m.get("id") in enabled_ids)]
                         _note_success(db, acc)

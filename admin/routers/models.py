@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from admin import backend
+from admin import model_catalog
 from admin.account_binding import scope_accounts
 from admin.config import settings
 from admin.db import get_db
@@ -244,10 +245,10 @@ def _sync_models_locked(db: Session, account_id: int | None = None) -> dict:
         mid = m.get("id")
         if not mid:
             continue
-        if str(mid).strip().lower() == "auto":
-            # 旧名 auto 已废弃（上游改名为 Workbuddy-Auto，见 model_catalog.AUTO_MODEL_ID）。
-            # 只跳过这个旧名，避免管理页残留一个永远调不通的模型；
-            # 新名 Workbuddy-Auto 属于正常上游模型，照常入库并在列表里可选。
+        if model_catalog.is_auto_model(mid):
+            # 「自动择优」聚合模型（接口 id "auto"，客户端显示名 "Workbuddy-Auto"）
+            # 不进模型配置表：它不是可独立配置权益的真实模型，路由由
+            # proxy._pick_best_model 统一处理，避免管理页出现一个语义重复的条目。
             continue
         # 解析积分倍率
         raw_credits = m.get("credits") or ""

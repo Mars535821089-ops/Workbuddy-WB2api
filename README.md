@@ -120,8 +120,8 @@
    - **API 接口地址 (Base URL)**: `http://<服务器IP>:8790/v1`
    - **API 密钥 (API Key)**: 刚才复制的 `sk-xxxx`
    - **模型名称 (Model)**:
-     - 填 `Workbuddy-Auto`（**强烈推荐！** 系统会自动择优路由至最适合当前任务的顶级模型，默认上游命中混元 `hy4-preview` 旗舰思考大模型，完整支持长思维链 `reasoning_content`，无需人工反复切换模型名称）。
-       - 旧名 `auto` 仍作为别名兼容（老客户端、老配置不用改）；但任何情况下发给上游的都是规范名 `Workbuddy-Auto`。
+     - 填 `Workbuddy-Auto` 或 `auto`（**强烈推荐！** 系统会自动择优路由至最适合当前任务的顶级模型，默认上游命中混元 `hy4-preview` 旗舰思考大模型，完整支持长思维链 `reasoning_content`，无需人工反复切换模型名称）。
+       - 说明：`Workbuddy-Auto` 是客户端界面的显示名，上游接口里该模型的 id 仍是 `auto`；两个名字网关都接受，发给上游的一律是接口 id `auto`。
      - 亦可直接填写特定模型：`hy4-preview`（混元旗舰思考）、`deepseek-v4-pro`、`kimi-k3.1-pro`、`minimax-m3.1-flash` 等。
 
 ---

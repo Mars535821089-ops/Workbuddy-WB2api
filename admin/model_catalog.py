@@ -8,11 +8,13 @@ _cache = OrderedDict()
 _lock = threading.Lock()
 TTL_SECONDS = 300
 
-# 上游「自动择优」聚合模型。2026-10 起上游把模型名从 "auto" 改为 "Workbuddy-Auto"
-# （客户端模型下拉里显示的就是这个名字）。旧名继续接受，避免老客户端与老配置
-# （例如第三方客户端里存着 "auto"）在升级后直接报模型不存在；但任何发给上游的
-# 请求都必须使用规范名，否则上游会判为未知模型。
-AUTO_MODEL_ID = "Workbuddy-Auto"
+# 上游「自动择优」聚合模型。
+# 客户端界面（5.8.3 起）把它显示为 "Workbuddy-Auto"，但聊天接口
+# /v2/chat/completions 里上游注册的模型 id 仍然是 "auto" —— 实测发
+# "Workbuddy-Auto" 会被上游以 11102「model service info not found」拒绝。
+# 因此：对外（客户端请求、模型展示）新旧名都接受；发给上游的一律是
+# "auto"。将来上游真换了接口 id，只需改这里一处。
+AUTO_MODEL_ID = "auto"
 AUTO_MODEL_ALIASES = frozenset({"auto", "workbuddy-auto"})
 
 

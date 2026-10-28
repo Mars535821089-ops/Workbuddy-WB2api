@@ -1639,7 +1639,7 @@ codex --profile workbuddy "你的任务描述"
 
 - Base URL：`http://127.0.0.1:8790/v1`（共享平台）或 `:8787/v1`（本机直连）
 - API Key：留空，或填启动时 `--api-key` / 后台创建的 `wb-...` Key
-- 模型名：`glm-5.2` / `deepseek-v4-pro` / `kimi-k2.7` / `Workbuddy-Auto`（自动择优，旧名 `auto` 仍兼容）等
+- 模型名：`glm-5.2` / `deepseek-v4-pro` / `kimi-k2.7` / `Workbuddy-Auto`（自动择优；显示名，接口 id 为 `auto`，两者等价）等
 
 ```bash
 curl -N http://127.0.0.1:8790/v1/chat/completions \
