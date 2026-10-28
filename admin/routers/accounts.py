@@ -3,6 +3,7 @@ import glob
 import json
 import os
 import shutil
+import threading
 from datetime import datetime, timezone, timedelta
 import time
 from typing import Literal, Optional
@@ -21,6 +22,7 @@ from admin.models import Account, AccountModelCooldown, ApiKey, ModelConfig, Usa
 from admin.security import require_admin
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
+_CLIENT_SWITCH_LOCK = threading.Lock()
 
 
 class AccountIn(BaseModel):
@@ -45,11 +47,12 @@ class AccountBatchIn(BaseModel):
 
 class InjectIn(BaseModel):
     confirm: bool = False
-    # 默认 True：注入后自动重启客户端，让所有会话同步到新账号。
+    # 默认 True：注入后自动重启客户端，全部现有会话跟随新账号。
     # 客户端只在启动时读一次登录态文件，运行中还会把旧会话写回同一个文件，
     # 所以「先退出 → 写文件 → 再拉起」是唯一能立刻生效的顺序。
     # 传 False 退化成旧的「只写文件」行为，留给不想动自己窗口的场景。
     restart: bool = True
+    sync_history: bool = True
 
 
 
@@ -1059,10 +1062,21 @@ def export_one_account(
 
 @router.post("/{acc_id}/inject")
 def inject_to_client(acc_id: int, body: InjectIn, _: bool = Depends(require_admin), db: Session = Depends(get_db)):
+    # Double-clicks or simultaneous administrators must not interleave
+    # quit/cache/write/relaunch operations against the same desktop instance.
+    if not _CLIENT_SWITCH_LOCK.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="客户端正在切换账号，请等待当前注入完成。")
+    try:
+        return _inject_to_client(acc_id, body, db)
+    finally:
+        _CLIENT_SWITCH_LOCK.release()
+
+
+def _inject_to_client(acc_id: int, body: InjectIn, db: Session):
     """把号池里某账号的 .info 注入到本机客户端的活动登录文件（先备份当前登录态）。
 
-    默认还会同步会话：客户端正在跑就先让它退出（否则写了不生效、还会被它自己的
-    旧会话覆盖），落盘成功后再原样拉起，所有窗口重开后统一是新账号。
+    全部已有本地会话保留原 ID 和正文文件，切换账号时迁移可见范围及置顶状态。
+    不以目标账号云端历史查询为前置条件，不复制出另一批对话。
     """
     acc = db.query(Account).filter(Account.id == acc_id).first()
     if not acc:
@@ -1076,11 +1090,19 @@ def inject_to_client(acc_id: int, body: InjectIn, _: bool = Depends(require_admi
         raise HTTPException(status_code=500, detail=f"客户端登录目录不存在: {d}")
 
     import admin.client_session as cs
+    from admin import client_follow
     target = os.path.join(d, "workbuddy-desktop.info")
     info = cs.detect_client()
     was_running = bool(info["pids"])
     need_restart = bool(body.restart) and was_running
     quitted = False
+    followed = None
+
+    if body.sync_history:
+        if was_running and not body.restart:
+            raise HTTPException(status_code=409, detail="加载会话需要重启客户端；本次未做改动。")
+        if not client_follow.history_db_path().is_file():
+            raise HTTPException(status_code=409, detail="未找到本机 WorkBuddy 会话数据库，请先启动一次客户端。")
 
     if need_restart and not info["app_path"]:
         raise HTTPException(
@@ -1091,47 +1113,86 @@ def inject_to_client(acc_id: int, body: InjectIn, _: bool = Depends(require_admi
     try:
         if need_restart:
             # ① 先让客户端退出，并等它彻底死透——它活着就会把旧会话写回同一文件
-            q = cs.quit_client(info["app_path"], info["pids"])
+            q = cs.quit_client(info["app_path"], info["pids"], force=False)
             quitted = q["was_running"] and q["exited"]
             if not quitted:
                 raise HTTPException(
                     status_code=409,
                     detail="客户端未能在预期时间内退出。为避免新凭证被它覆盖，已放弃本次注入。")
 
-        # ② 写文件（此时已经没有客户端会跟它抢写）
+        # ② Keep the SAME conversations under the new account scope. Desktop
+        # shutdown flushes its latest messages, pins and current route first.
+        if body.sync_history:
+            client_follow.recover_pending(client_follow.history_db_path())
+            followed = client_follow.follow_sessions(
+                client_follow.history_db_path(), acc.uid, client_follow.current_uid(target),
+                auth_file=target)
+
+        # ③ 写文件（此时已经没有客户端会跟它抢写）
         backup = None
         if os.path.exists(target):
-            ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+            ts = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
             backup = target + f".bak-{ts}"
             shutil.copy2(target, backup)
-        with open(target, "w", encoding="utf-8") as f:
-            f.write(raw)
-            f.flush()
-            os.fsync(f.fileno())
+            os.chmod(backup, 0o600)
+        import tempfile
+        fd, staged = tempfile.mkstemp(prefix=".workbuddy-inject-", dir=d)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(raw)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(staged, target)
+        finally:
+            if os.path.exists(staged):
+                os.unlink(staged)
+        if followed:
+            try:
+                client_follow.finish_switch(client_follow.history_db_path())
+            except OSError:
+                # The atomic login replacement is the commit point. A leftover
+                # journal is finalized on launch; never undo ownership alone.
+                pass
     except HTTPException:
+        if followed:
+            client_follow.rollback(followed["backup"], client_follow.history_db_path())
         if quitted:
-            cs.launch_client(info["app_path"])
+            cs.launch_client(info["app_path"], adapt_dns=False)
         raise
-    except Exception as exc:
+    except client_follow.FollowError as exc:
+        if followed:
+            client_follow.rollback(followed["backup"], client_follow.history_db_path())
         if quitted:
-            cs.launch_client(info["app_path"])
-        raise HTTPException(status_code=500, detail=f"写入客户端登录态失败: {exc}") from exc
+            cs.launch_client(info["app_path"], adapt_dns=False)
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    except Exception as exc:
+        if followed:
+            client_follow.rollback(followed["backup"], client_follow.history_db_path())
+        if quitted:
+            cs.launch_client(info["app_path"], adapt_dns=False)
+        raise HTTPException(status_code=500, detail="写入客户端登录态失败，原登录文件已保留") from exc
 
-    # ③ 拉回客户端，并确认它真的起来了
+    # ④ 拉回客户端，并确认它真的起来了
     relaunch = {"launched": False, "running": False}
-    if quitted:
-        relaunch = cs.launch_client(info["app_path"])
+    if quitted or (body.restart and not was_running and info["app_path"]):
+        relaunch = cs.launch_client(info["app_path"], adapt_dns=False)
         time.sleep(0.5)
         relaunch["pids"] = cs.client_pids(info["app_path"])
         relaunch["running"] = bool(relaunch["pids"]) or bool(relaunch.get("running"))
 
     if need_restart:
-        note = ("客户端已重启，会话已同步到该账号。" if relaunch.get("running")
+        note = ("客户端已重启，登录态已切换到该账号。" if relaunch.get("running")
                 else "登录态已写入，客户端也已尝试拉起，但未检测到进程，请手动打开确认。")
+    elif relaunch.get("running"):
+        note = "客户端已启动，登录态已切换到该账号。"
     elif was_running:
         note = "客户端仍在运行，登录态已写入但本次未重启——重启客户端后才切换。"
     else:
         note = "客户端未在运行，登录态已写入；下次启动客户端即生效。"
+    if followed:
+        note += (f" 全部现有会话已跟随：{followed['active_count']} 条当前会话，"
+                 f"{followed['archived_count']} 条归档会话；"
+                 f"{followed['pinned_count']} 条置顶已保留。")
 
     return {
         "ok": True,
@@ -1143,6 +1204,9 @@ def inject_to_client(acc_id: int, body: InjectIn, _: bool = Depends(require_admi
         "client_restarted": bool(relaunch.get("launched")) and need_restart,
         "client_running_now": bool(relaunch.get("running")),
         "dns_adapted": relaunch.get("dns_overrides"),
+        "sessions_followed": bool(followed),
+        "followed_session_count": followed["session_count"] if followed else None,
+        "history": followed,
         "note": note,
     }
 
@@ -1153,25 +1217,29 @@ class RestartClientIn(BaseModel):
 
 @router.post("/client/relaunch")
 def relaunch_client(body: RestartClientIn, _: bool = Depends(require_admin)):
-    """只重启客户端，不动登录态。
+    if not _CLIENT_SWITCH_LOCK.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="客户端正在切换账号，请等待当前注入完成。")
+    try:
+        return _relaunch_client(body)
+    finally:
+        _CLIENT_SWITCH_LOCK.release()
 
-    本机 DNS 把云端域名解析到连不上的地址时（代理工具的 fake-ip 段最常见），
-    客户端的请求全部打黑洞，表现就是会话列表空、模型列表加载不出来。这条
-    路由在拉起时给客户端进程本身一份 DNS 映射绕开它——不写 hosts、不改系统
-    代理、不动任何全局配置，只对这一次启动的实例生效，退出即失效。
-    """
+
+def _relaunch_client(body: RestartClientIn):
+    """只重启客户端，不动登录态、网络及代理设置。"""
     if not body.confirm:
         raise HTTPException(status_code=400, detail="需要 confirm=true 才执行")
+    import admin.client_session as cs
     info = cs.detect_client()
     if not info["pids"]:
         return {"ok": False, "was_running": False,
                 "note": "客户端当前没有在运行，无需重启。"}
     if not info["app_path"]:
         raise HTTPException(status_code=409, detail="找不到客户端安装位置，无法重启。")
-    q = cs.quit_client(info["app_path"], info["pids"])
+    q = cs.quit_client(info["app_path"], info["pids"], force=False)
     if not (q.get("was_running") and q.get("exited")):
         raise HTTPException(status_code=409, detail="客户端未能在预期时间内退出，本次未做改动。")
-    relaunch = cs.launch_client(info["app_path"])
+    relaunch = cs.launch_client(info["app_path"], adapt_dns=False)
     time.sleep(0.5)
     relaunch["pids"] = cs.client_pids(info["app_path"])
     relaunch["running"] = bool(relaunch["pids"]) or bool(relaunch.get("running"))
@@ -1180,7 +1248,7 @@ def relaunch_client(body: RestartClientIn, _: bool = Depends(require_admin)):
         "launched": bool(relaunch.get("launched")),
         "running": bool(relaunch.get("running")),
         "dns_adapted": relaunch.get("dns_overrides"),
-        "note": ("客户端已带网络适配重启，会话列表应能正常加载。"
+        "note": ("客户端已重启，网络及代理设置保持原样。"
                  if relaunch.get("running")
                  else "已尝试拉起但未检测到进程，请手动打开确认。"),
     }

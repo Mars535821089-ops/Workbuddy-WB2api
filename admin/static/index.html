@@ -2127,7 +2127,7 @@ function accountActionDescription(title) {
     '猫猫旅行':'查看旅行状态，派出或领取奖励',
     '积分明细（逐包到期日）':'查看积分包余额、有效期与到期风险',
     '请求用量':'查看该账号的上游请求与消耗明细',
-    '注入本机客户端':'将该账号登录态写入本机客户端',
+    '注入本机客户端':'切换账号，全部现有会话跟随',
     '刷新余额与到期快照':'同步最新余额及积分包到期信息',
     '导出登录态':'下载该账号凭据，供备份或重新导入',
     '启用/禁用':'控制该账号是否参与网关调度',
@@ -2447,16 +2447,15 @@ async function toggleAcc(id,st){ await api("/api/accounts/"+id,{method:"PATCH",h
 async function delAcc(id){ if(!await uiConfirm({message:"确认删除该账号？", title:"删除账号"}))return; const r=await api("/api/accounts/"+id,{method:"DELETE"}); toast(r.ok?"已删除":"删除失败",r.ok?"ok":"err"); if(r.ok) loadAccounts(); }
 async function injectAcc(id){
   if(!await uiConfirm({kind:"warn", danger:false, title:"注入本机客户端",
-      message:"确认把该账号注入到本机 WorkBuddy 客户端？\n① 自动备份当前登录态\n② 客户端自动退出并重启，会话同步到该账号",
-      okText:"确认注入并同步"})) return;
-  const r = await api("/api/accounts/"+id+"/inject",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirm:true,restart:true})});
+      message:"切换到该账号，并让全部现有会话跟随？\n聊天正文、置顶、归档和当前会话会保留。\n客户端将自动保存并重启，会话不会因账号切换而清空，也不会重复复制。",
+      okText:"切换账号并保留会话"})) return;
+  toast("正在切换账号并保留全部会话…", "ok");
+  const r = await api("/api/accounts/"+id+"/inject",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirm:true,restart:true,sync_history:true})});
   const d = await r.json().catch(()=>({}));
   if(r.ok){
     const bk = d.backup ? d.backup.split(/[\\/]/).pop() : "无";
-    if(d.client_restarted){
-      const adap = d.dns_adapted ? "｜已绕开本机 DNS 劫持" : "";
-      toast(`已注入并重启客户端（${d.account||""}），会话已同步${adap}｜备份: ${bk}`, d.client_running_now?"ok":"warn");
-    } else toast(`已注入登录态（备份: ${bk}）。${d.note||""}`, d.client_was_running?"warn":"ok");
+    toast(`已注入（${d.account||""}）｜备份: ${bk}。${d.note||""}`,
+      !d.sessions_followed || !d.client_running_now ? "warn" : "ok");
   } else toast("注入失败: "+(d.detail||""), "err");
 }
 

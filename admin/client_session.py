@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import plistlib
 import shutil
 import signal
 import subprocess
@@ -232,7 +233,7 @@ def wait_running(app_path: str, timeout: float = 20.0, poll: float = 0.5) -> boo
 
 
 def quit_client(app_path: str | None = None, pids: list[int] | None = None,
-                graceful_timeout: float = 10.0) -> dict[str, Any]:
+                graceful_timeout: float = 10.0, force: bool = True) -> dict[str, Any]:
     """让客户端退出：先 Graceful（osascript / taskkill），不行再 TERM，最后 KILL。
 
     返回 {'was_running','exited','timeout'}，调用方按 `exited` 决定是否继续写文件。
@@ -249,7 +250,17 @@ def quit_client(app_path: str | None = None, pids: list[int] | None = None,
             name = os.path.basename(path.rstrip("/"))
             if name.endswith(".app"):
                 name = name[: -len(".app")]
-            subprocess.run(["osascript", "-e", f'quit app "{name}"'],
+            target = f"application {json.dumps(name)}"
+            try:
+                with open(os.path.join(path, "Contents", "Info.plist"), "rb") as source:
+                    bundle = plistlib.load(source).get("CFBundleIdentifier")
+                if bundle:
+                    target = f"application id {json.dumps(bundle)}"
+            except (OSError, ValueError):
+                pass
+            # The bundle directory may be WorkBuddy-CN.app while its registered
+            # application name is WorkBuddy. Target the actual bundle identity.
+            subprocess.run(["osascript", "-e", f"tell {target} to quit"],
                            capture_output=True, text=True, timeout=8)
         elif IS_WIN:
             subprocess.run(["taskkill", "/IM",
@@ -266,6 +277,8 @@ def quit_client(app_path: str | None = None, pids: list[int] | None = None,
 
     if wait_exit(target_pids, timeout=graceful_timeout):
         return {"was_running": True, "exited": True, "timeout": False}
+    if not force:
+        return {"was_running": True, "exited": False, "timeout": True}
 
     # ② TERM → KILL：还在顽抗的，逐级加压
     zombies = _zombie_pids()
@@ -322,7 +335,7 @@ def _mac_executable(app_path: str) -> str | None:
 
 
 def launch_client(app_path: str | None = None, wait: bool = True,
-                  timeout: float = 20.0, adapt_dns: bool = True) -> dict[str, Any]:
+                  timeout: float = 20.0, adapt_dns: bool = False) -> dict[str, Any]:
     """重新启动客户端，并（可选）等到它真的出现进程为止。
 
     adapt_dns: 若本机 DNS 把云端域名解析到不可达地址，就给这个进程塞一份
@@ -332,6 +345,13 @@ def launch_client(app_path: str | None = None, wait: bool = True,
     path = app_path or app_install_path(os.getenv("ADMIN_CLIENT_APP", ""))
     if not path:
         return {"launched": False, "app_path": None, "reason": "找不到客户端安装位置"}
+
+    from admin.client_follow import history_db_path, recover_pending, FollowError
+    try:
+        recover_pending(history_db_path())
+    except (FollowError, OSError, ValueError):
+        return {"launched": False, "running": False, "app_path": path,
+                "reason": "上次账号切换尚未恢复，已停止启动以保护会话"}
 
     extra: list[str] = []
     dns_detail: dict = {}
