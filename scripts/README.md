@@ -23,6 +23,12 @@ powershell -File scripts\daemon.ps1 -Detach
 
 Linux 守护脚本的安装方式与环境变量见 `watchdog.sh` 文件头。Docker 部署优先使用 Compose 中已有的容器重启策略。
 
+### macOS 本机客户端启动
+
+管理服务启动 WorkBuddy 时，通过 `launchctl asuser <服务用户 UID> /usr/bin/open -a <app>` 交给该用户的 GUI 域和 LaunchServices，不能直接运行 `.app/Contents/MacOS` 下的可执行文件，否则系统域服务的子进程可能无法连接输入法和剪贴板。额外的 Chromium 参数通过 `--args` 逐项传递，原有 DNS 适配语义不变。
+
+服务必须以桌面登录用户运行，且该用户已有 GUI 登录会话；仓库中的 `com.mars.workbuddy2api.daemon.plist` 通过 `UserName` 指定服务用户。GUI 启动失败时返回启动失败，不退回直接执行客户端。启动命令成功后仍按原有逻辑等待客户端进程出现。
+
 ## 凭证配置
 
 在已安装官方 Windows 客户端的电脑上执行：

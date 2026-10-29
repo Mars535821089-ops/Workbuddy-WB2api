@@ -37,6 +37,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 import uvicorn
 from admin.upstream_errors import UpstreamError
 from admin.model_catalog import AUTO_MODEL_ID, is_auto_model
+from admin import upstream_route
 
 import upstream_compat
 
@@ -347,7 +348,7 @@ class CredentialManager:
         headers["X-Auth-Refresh-Source"] = "plugin"
         url = f"{BACKEND}/v2/plugin/auth/token/refresh"
         try:
-            with httpx.Client(timeout=15, limits=_HTTP_LIMITS) as c:
+            with upstream_route.client(BACKEND, timeout=15, limits=_HTTP_LIMITS) as c:
                 r = c.post(url, headers=headers, json={})
             data = r.json()
         except Exception as e:
@@ -459,7 +460,7 @@ class CredentialManager:
             from admin.client_profile import risk_headers
             headers.update(risk_headers())
         try:
-            with httpx.Client(timeout=timeout, limits=_HTTP_LIMITS, **client_options) as c:
+            with upstream_route.client(BACKEND, timeout=timeout, limits=_HTTP_LIMITS, **client_options) as c:
                 if method.upper() == "GET":
                     r = c.get(url, headers=headers, **request_options)
                 else:
@@ -483,7 +484,7 @@ class CredentialManager:
         headers = self.get_headers()
         url = f"{BACKEND}{path}"
         try:
-            with httpx.Client(timeout=15, limits=_HTTP_LIMITS) as c:
+            with upstream_route.client(BACKEND, timeout=15, limits=_HTTP_LIMITS) as c:
                 if method.upper() == "GET":
                     r = c.get(url, headers=headers)
                 else:
@@ -574,7 +575,7 @@ class CredentialManager:
         headers = self.get_headers()
         url = f"{BACKEND}/v2/images/generations"
         try:
-            with httpx.Client(timeout=timeout, limits=_HTTP_LIMITS) as c:
+            with upstream_route.client(BACKEND, timeout=timeout, limits=_HTTP_LIMITS) as c:
                 r = c.post(url, headers=headers, json=body)
         except Exception as e:
             raise RuntimeError(f"生图请求网络失败：{e}")
@@ -1047,7 +1048,7 @@ async def chat_completions(request: Request,
 
     # 非流式：后端只支持流式，这里把后端 SSE 聚合成单个 chat.completion 响应
     try:
-        async with httpx.AsyncClient(timeout=_stream_timeout(), limits=_HTTP_LIMITS) as c:
+        async with upstream_route.async_client(BACKEND, timeout=_stream_timeout(), limits=_HTTP_LIMITS) as c:
             async with c.stream("POST", url, headers=headers, json=body) as r:
                 if r.status_code != 200:
                     raw = await r.aread()
@@ -1058,7 +1059,7 @@ async def chat_completions(request: Request,
     except HTTPException:
         raise
     except httpx.HTTPError as e:
-        _log(f"[{rid}] ✗ 网络错误 | {model_name} | {e}")
+        _log(f"[{rid}] ✗ 网络错误 | {model_name} | {type(e).__name__}: {e}")
         raise HTTPException(status_code=502, detail={"error": {"message": f"upstream error: {e}", "type": "upstream_error"}})
     _log_finish(model_name, t0, collected, rid)
     return JSONResponse(content=collected)
@@ -1255,7 +1256,7 @@ async def _stream_upstream(url: str, headers: dict, body: dict,
         # 原来是 timeout=None（完全不设限）：连接一旦静默死掉就永久挂住，
         # 既不报错也不归还资源。改成静默超时 —— 有数据就续期、静默到上限才判死，
         # 等价于参考实现 internal/upstream/idle.go 的空闲监控，且不设总时长。
-        async with httpx.AsyncClient(timeout=_stream_timeout(), limits=_HTTP_LIMITS) as c:
+        async with upstream_route.async_client(BACKEND, timeout=_stream_timeout(), limits=_HTTP_LIMITS) as c:
             async with c.stream("POST", url, headers=headers, json=body) as r:
                 if r.status_code != 200:
                     err = await r.aread()
@@ -1274,7 +1275,7 @@ async def _stream_upstream(url: str, headers: dict, body: dict,
                 if tail:
                     yield tail
     except httpx.HTTPError as e:
-        _log(f"{prefix}✗ 网络错误 | {model_name} | {e}")
+        _log(f"{prefix}✗ 网络错误 | {model_name} | {type(e).__name__}: {e}")
         yield _err_event(str(e).encode(), 502)
 
     # 流结束：输出完成日志
@@ -1331,7 +1332,7 @@ async def _post_backend_once(url: str, headers: dict, body: dict) -> tuple[int, 
     # 这也是在消费一个 SSE 流（只是聚合成一次性字节），所以用同一套超时：
     # connect 短、read 管静默、**不设总时长**。原来的 timeout=120 会把 connect
     # 也设成 120s，遇到连不上的节点就一直挂着不换号。
-    async with httpx.AsyncClient(timeout=_stream_timeout(), limits=_HTTP_LIMITS) as c:
+    async with upstream_route.async_client(BACKEND, timeout=_stream_timeout(), limits=_HTTP_LIMITS) as c:
         async with c.stream("POST", url, headers=headers, json=body) as r:
             chunks: list[bytes] = []
             async for chunk in r.aiter_bytes():
@@ -1438,7 +1439,7 @@ async def create_response(request: Request,
     except HTTPException:
         raise
     except httpx.HTTPError as e:
-        _log(f"[{rid}] ✗ 网络错误 | {model_name} | {e}")
+        _log(f"[{rid}] ✗ 网络错误 | {model_name} | {type(e).__name__}: {e}")
         raise HTTPException(status_code=502, detail={"error": {"message": f"upstream error: {e}", "type": "upstream_error"}})
 
     result = converter.get_nonstream_response()
@@ -1469,7 +1470,7 @@ async def _stream_responses(url: str, headers: dict, body: dict,
             if events:
                 yield events.encode("utf-8")
     except httpx.HTTPError as e:
-        _log(f"{prefix}✗ 网络错误 | {model_name} | {e}")
+        _log(f"{prefix}✗ 网络错误 | {model_name} | {type(e).__name__}: {e}")
         error_evt = {"type": "error", "error": {"message": str(e)[:500], "code": 502}}
         yield f"data: {json.dumps(error_evt, ensure_ascii=False)}\n\n".encode("utf-8")
         return
@@ -1559,7 +1560,7 @@ async def create_message(request: Request,
 
     # 非流式：聚合后端 SSE → 组装单个 Anthropic Message 对象
     try:
-        async with httpx.AsyncClient(timeout=_stream_timeout(), limits=_HTTP_LIMITS) as c:
+        async with upstream_route.async_client(BACKEND, timeout=_stream_timeout(), limits=_HTTP_LIMITS) as c:
             async with c.stream("POST", url, headers=headers, json=chat_body) as r:
                 if r.status_code != 200:
                     raw = await r.aread()
@@ -1571,7 +1572,7 @@ async def create_message(request: Request,
     except HTTPException:
         raise
     except httpx.HTTPError as e:
-        _log(f"[{rid}] ✗ ANTHROPIC 网络错误 | {model_name} | {e}")
+        _log(f"[{rid}] ✗ ANTHROPIC 网络错误 | {model_name} | {type(e).__name__}: {e}")
         raise HTTPException(status_code=502, detail={
             "error": {"message": f"upstream error: {e}", "type": "upstream_error"}})
 
@@ -1629,7 +1630,7 @@ async def _stream_anthropic(url: str, headers: dict, body: dict,
         # 原来是 timeout=None（完全不设限）：连接一旦静默死掉就永久挂住，
         # 既不报错也不归还资源。改成静默超时 —— 有数据就续期、静默到上限才判死，
         # 等价于参考实现 internal/upstream/idle.go 的空闲监控，且不设总时长。
-        async with httpx.AsyncClient(timeout=_stream_timeout(), limits=_HTTP_LIMITS) as c:
+        async with upstream_route.async_client(BACKEND, timeout=_stream_timeout(), limits=_HTTP_LIMITS) as c:
             async with c.stream("POST", url, headers=headers, json=body) as r:
                 if r.status_code != 200:
                     err = await r.aread()
@@ -1642,7 +1643,7 @@ async def _stream_anthropic(url: str, headers: dict, body: dict,
                     if events:
                         yield events.encode("utf-8")
     except httpx.HTTPError as e:
-        _log(f"{prefix}✗ 网络错误 | {model_name} | {e}")
+        _log(f"{prefix}✗ 网络错误 | {model_name} | {type(e).__name__}: {e}")
         error_evt = {"type": "error", "error": {"message": str(e)[:500], "type": "api_error", "code": 502}}
         yield f"event: error\ndata: {json.dumps(error_evt, ensure_ascii=False)}\n\n".encode("utf-8")
         return

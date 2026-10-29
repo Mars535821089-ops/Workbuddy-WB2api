@@ -77,6 +77,13 @@ tests/
 *_test.py
 test/
 
+# Synthetic regressions for desktop launch and conversation preservation.
+!tests/
+!tests/__init__.py
+!tests/test_client_session.py
+!tests/test_client_follow_preservation.py
+!tests/test_upstream_route.py
+
 # ===== 内部分析文档（不提交） =====
 # docs/ 里是协议逆向取证与排查记录，含**未脱敏的真实手机号、真实 token
 # 片段、以及本地账号池的真实数据**（例：某次实测记录里直接写了手机号）。

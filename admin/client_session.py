@@ -299,41 +299,6 @@ def quit_client(app_path: str | None = None, pids: list[int] | None = None,
     return {"was_running": True, "exited": not alive, "timeout": bool(alive)}
 
 
-def _mac_executable(app_path: str) -> str | None:
-    """The real binary inside an .app bundle, so we can pass argv to it.
-
-    `open -a` cannot take arguments, and we need to hand Electron our DNS
-    overrides - so resolve Contents/MacOS/<exe> and run that directly.
-    """
-    macos = os.path.join(app_path, "Contents", "MacOS")
-    if not os.path.isdir(macos):
-        return None
-    plist = os.path.join(app_path, "Contents", "Info.plist")
-    name = None
-    if os.path.exists(plist):
-        try:
-            done = subprocess.run(
-                ["/usr/bin/plutil", "-convert", "json", "-o", "-", "--", plist],
-                capture_output=True, text=True, timeout=5)
-            name = (json.loads(done.stdout) or {}).get("CFBundleExecutable")
-        except Exception:
-            name = None
-    for candidate in (name,):
-        if candidate:
-            target = os.path.join(macos, candidate)
-            if os.path.isfile(target) and os.access(target, os.X_OK):
-                return target
-    try:
-        entries = sorted(os.listdir(macos))
-    except Exception:
-        return None
-    for entry in entries:
-        target = os.path.join(macos, entry)
-        if os.path.isfile(target) and os.access(target, os.X_OK):
-            return target
-    return None
-
-
 def launch_client(app_path: str | None = None, wait: bool = True,
                   timeout: float = 20.0, adapt_dns: bool = False) -> dict[str, Any]:
     """重新启动客户端，并（可选）等到它真的出现进程为止。
@@ -365,17 +330,14 @@ def launch_client(app_path: str | None = None, wait: bool = True,
     launched = False
     try:
         if IS_MAC:
-            exe = _mac_executable(path)
-            if exe:
-                argv = [exe] + extra
-                subprocess.Popen(argv, stdin=subprocess.DEVNULL,
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                 start_new_session=True, close_fds=True)
-                launched = True
-            else:
-                launched = subprocess.run(["/usr/bin/open", "-a", path],
-                                          capture_output=True, text=True,
-                                          timeout=15).returncode == 0
+            # Use the GUI domain even when the service runs in the system domain;
+            # direct execution can break input-method and pasteboard XPC access.
+            argv = ["/bin/launchctl", "asuser", str(os.getuid()),
+                    "/usr/bin/open", "-a", path]
+            if extra:
+                argv += ["--args"] + extra
+            launched = subprocess.run(argv, capture_output=True, text=True,
+                                      timeout=15).returncode == 0
         elif IS_WIN:
             subprocess.Popen([path] + extra, close_fds=True)
             launched = True
