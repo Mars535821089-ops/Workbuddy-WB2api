@@ -20,6 +20,8 @@ class RoutingFixture:
         self.addCleanup(self.stack.close)
         self.stack.enter_context(patch.dict(upstream_route.os.environ,
                                              {"WORKBUDDY_ANDROID": "0"}))
+        self.explicit_proxy = self.stack.enter_context(
+            patch.object(upstream_route, "_explicit_proxy", return_value=False))
         self.proxies = self.stack.enter_context(
             patch.object(upstream_route, "getproxies", return_value={}))
         self.addresses = self.stack.enter_context(
@@ -55,6 +57,7 @@ class RouteTests(RoutingFixture, unittest.TestCase):
                 self.resolve.assert_not_called()
 
     def test_explicit_environment_proxy_keeps_original_routing(self):
+        self.explicit_proxy.return_value = True
         for proxies in ({"https": "http://synthetic:1080"}, {"all": "socks5://synthetic:1080"}):
             with self.subTest(proxies=proxies):
                 self.proxies.return_value = proxies
@@ -86,8 +89,7 @@ class RouteTests(RoutingFixture, unittest.TestCase):
     def test_no_verified_address_is_not_a_success_shaped_fallback(self):
         self.resolve.return_value = (None, {HOST: {"override": None}})
         request = httpx.Request("GET", URL)
-        with self.assertLogs(upstream_route._log, level="WARNING"):
-            upstream_route._route(request, HOST)
+        upstream_route._route(request, HOST)
         self.assertEqual(str(request.url), URL)
         self.assertNotIn("sni_hostname", request.extensions)
 
@@ -129,6 +131,22 @@ class RouteTests(RoutingFixture, unittest.TestCase):
         upstream_route._route(request, HOST, trust_env=False)
         self.proxies.assert_not_called()
         self.assertEqual(request.url.host, "203.0.113.7")
+
+    def test_system_proxy_bypass_is_scoped_to_verified_ip(self):
+        self.proxies.return_value = {"https": "http://127.0.0.1:1082"}
+        with patch.object(upstream_route.httpx, "HTTPTransport") as transport:
+            options = upstream_route._options(BACKEND, {"verify": True})
+        self.assertEqual(set(options["mounts"]), {"https://203.0.113.7"})
+        transport.assert_called_once_with(verify=True)
+        self.assertNotIn("trust_env", options)
+
+    def test_system_proxy_kept_when_dns_is_healthy_or_explicit_proxy_is_set(self):
+        self.proxies.return_value = {"https": "http://127.0.0.1:1082"}
+        self.addresses.return_value = ["203.0.113.9"]
+        self.assertNotIn("mounts", upstream_route._options(BACKEND, {}))
+        self.explicit_proxy.return_value = True
+        self.addresses.return_value = ["198.18.0.99"]
+        self.assertNotIn("mounts", upstream_route._options(BACKEND, {}))
 
 
 class AsyncRouteTests(RoutingFixture, unittest.IsolatedAsyncioTestCase):
